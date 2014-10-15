@@ -1,5 +1,7 @@
 module ObjectiveC
 
+using Lazy
+
 import Base: show, convert, super, methods
 
 # Classes
@@ -79,10 +81,15 @@ function Selector(name)
                  string(name)))
 end
 
+macro sel_str(name)
+  Selector(name)
+end
+
 name{T}(sel::Selector{T}) = T
 
 function show(io::IO, sel::Selector)
-  print(io, "Selector $(name(sel))")
+  print(io, "sel")
+  show(io, string(name(sel)))
 end
 
 # Objects
@@ -98,8 +105,10 @@ Object(p::Ptr{Void}) = Object{name(class(p))}(p)
 objc_msgsend(obj, sel) = ccall(:objc_msgSend, Ptr{Void}, (Ptr{Void}, Ptr{Void}),
                                obj, sel)
 
-msg(obj, sel; ret = Object) =
-  objc_msgsend(obj, Selector(sel)) |> ret
+message(obj, sel) = objc_msgsend(obj, sel)
+
+# msg(obj, sel; ret = Object) =
+#   objc_msgsend(obj, Selector(sel)) |> ret
 
 # Import some classes
 
@@ -113,6 +122,40 @@ end
 
 # class(NSString)
 
+# Syntax
+
 # :[NSString initWithRed: 1 green: 2 blue: 4]
+
+callerror() = error("Invalid ObjC call syntax, use [obj method] or [obj method:param ...]")
+
+function calltransform(ex::Expr)
+  obj = ex.args[1]
+  args = ex.args[2:end]
+  isempty(args) && callerror()
+  if isexpr(args[1], Symbol)
+    length(args) > 1 && callerror()
+    return :(message($obj, $(Selector(args[1]))))
+  end
+  all(arg->isexpr(arg, :(:)) && isexpr(arg.args[1], Symbol), args) || callerror()
+  msg = join(vcat([arg.args[1] for arg in args], ""), ":") |> Selector
+  args = [arg.args[2] for arg in args]
+  :(message($obj, $msg, $(args...)))
+end
+
+:(meth:val).args[1]
+
+objcm(ex::Expr) =
+  isexpr(ex, :hcat) ? calltransform(ex) :
+    Expr(ex.head, map(objcm, ex.args)...)
+
+objcm(ex) = ex
+
+macro objc(ex)
+  esc(objcm(ex))
+end
+
+# @objc [NSString new]
+
+# calltransform(:[NSString foo:"foo" bar:2])
 
 end
