@@ -56,7 +56,7 @@ function methods(class::Class)
   meths′ = [unsafe_load(meths, i) for i = 1:count[1]]
   c_free(meths)
   meths = [ccall(:method_getName, Ptr{Void}, (Ptr{Void},), meth) for meth in meths′]
-  return map(meth->selname(meth), meths)
+  return map(meth->Selector(meth), meths)
 end
 
 # Messages
@@ -107,24 +107,13 @@ objc_msgsend(obj, sel) = ccall(:objc_msgSend, Ptr{Void}, (Ptr{Void}, Ptr{Void}),
 
 message(obj, sel) = objc_msgsend(obj, sel)
 
-# msg(obj, sel; ret = Object) =
-#   objc_msgsend(obj, Selector(sel)) |> ret
-
 # Import some classes
 
 for c in (:NSObject, :NSString, :NSArray)
   @eval const $c = Class($(Expr(:quote, c)))
 end
 
-# methods(NSString)
-
-# methods(class(NSString))
-
-# class(NSString)
-
 # Syntax
-
-# :[NSString initWithRed: 1 green: 2 blue: 4]
 
 callerror() = error("Invalid ObjC call syntax, use [obj method] or [obj method:param ...]")
 
@@ -157,5 +146,7 @@ end
 # @objc [NSString new]
 
 # calltransform(:[NSString foo:"foo" bar:2])
+
+# methods(NSString)
 
 end
