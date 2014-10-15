@@ -131,8 +131,6 @@ function calltransform(ex::Expr)
   :(message($obj, $msg, $(args...)))
 end
 
-:(meth:val).args[1]
-
 objcm(ex::Expr) =
   isexpr(ex, :hcat) ? calltransform(ex) :
     Expr(ex.head, map(objcm, ex.args)...)
