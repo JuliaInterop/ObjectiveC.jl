@@ -13,25 +13,25 @@ implementation(m::Ptr) =
         m)
 
 # From https://developer.apple.com/library/mac/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtTypeEncodings.html
-typeencodings = ['c' => Cchar,
-                 'i' => Cint,
-                 's' => Cshort,
-                 'l' => Clong,
-                 'q' => Clonglong,
-                 'C' => Cuchar,
-                 'I' => Cuint,
-                 'S' => Cushort,
-                 'L' => Culong,
-                 'Q' => Culonglong,
-                 'f' => Cfloat,
-                 'd' => Cdouble,
-                 'B' => Bool,
-                 'v' => Void,
-                 '*' => Ptr{Cchar},
-                 '@' => Object,
-                 '#' => Class,
-                 ':' => Selector,
-                 '^' => Ptr]
+const typeencodings = ['c' => Cchar,
+                       'i' => Cint,
+                       's' => Cshort,
+                       'l' => Clong,
+                       'q' => Clonglong,
+                       'C' => Cuchar,
+                       'I' => Cuint,
+                       'S' => Cushort,
+                       'L' => Culong,
+                       'Q' => Culonglong,
+                       'f' => Cfloat,
+                       'd' => Cdouble,
+                       'B' => Bool,
+                       'v' => Void,
+                       '*' => Ptr{Cchar},
+                       '@' => Object,
+                       '#' => Class,
+                       ':' => Selector,
+                       '^' => Ptr]
 
 # Other modifiers
 # r const
@@ -42,7 +42,7 @@ typeencodings = ['c' => Cchar,
 # R byref
 # V oneway
 # Numbers a stack size + offset, now obsolete
-const skip = Set(['r',
+const skip = Set(['r', 'V',
                   '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
 
 function nexttype(io::IO)
