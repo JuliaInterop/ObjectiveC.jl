@@ -1,5 +1,3 @@
-import Base: show, convert, super, methods
-
 # Classes
 
 immutable Class
