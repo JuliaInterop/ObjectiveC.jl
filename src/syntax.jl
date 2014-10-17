@@ -41,5 +41,5 @@ end
 macro classes (names)
   isexpr(names, Symbol) ? (names = [names]) : (names = names.args)
   Expr(:block, [:(const $(esc(name)) = Class($(Expr(:quote, name))))
-                for name in names]...)
+                for name in names]..., nothing)
 end
