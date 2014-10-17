@@ -2,8 +2,15 @@ method(class::Class, sel::Selector) =
   ccall(:class_getInstanceMethod, Ptr{Void}, (Ptr{Void}, Ptr{Void}),
         class, sel)
 
+method(obj::Object, sel::Selector) =
+  method(class(obj), sel)
+
 types(m::Ptr) =
   ccall(:method_getTypeEncoding, Ptr{Cchar}, (Ptr{Void},), m) |> bytestring
+
+implementation(m::Ptr) =
+  ccall(:method_getImplementation, Ptr{Void}, (Ptr{Void},),
+        m)
 
 # From https://developer.apple.com/library/mac/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtTypeEncodings.html
 typeencodings = Dict('c' => Cchar,
@@ -58,8 +65,13 @@ end
 
 parseencoding(s::String) = parseencoding(IOBuffer(s))
 
+signature(m::Ptr) = m |> types |> parseencoding
+
 function signature(class::Class, sel::Selector)
   m = method(class, sel)
   m == C_NULL && error("$class doesn't respond to $sel")
-  m |> types |> parseencoding
+  signature(m)
 end
+
+signature(obj::Object, sel::Selector) =
+  signature(class(obj), sel)
