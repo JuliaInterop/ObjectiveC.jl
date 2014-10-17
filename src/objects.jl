@@ -10,4 +10,6 @@ class(obj) =
 
 Object(p::Ptr{Void}) = Object{name(class(p))}(p)
 
+methods(obj::Object) = methods(class(obj))
+
 show{T}(io::IO, obj::Object{T}) = print(io, T, " Object")
