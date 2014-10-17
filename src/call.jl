@@ -24,6 +24,9 @@ end
 
 # Calls
 
+toobject(o::Object) = o
+toobject(c::Class) = c
+
 ctype(x) = x
 ctype(o::Type{Object}) = Ptr{Void}
 ctype(s::Type{Selector}) = Ptr{Void}
@@ -32,11 +35,18 @@ ctype(a::AbstractArray) = map(ctype, a)
 const cmsgsend = cglobal(:objc_msgSend)
 
 function message(obj, sel, args...)
+  obj = toobject(obj)
   clarse = class(obj)
   m = method(clarse, sel)
   m == C_NULL && error("$(clarse) does not respond to $sel")
   types = signature(m)
   ctypes = ctype(types)
+
+  args = Any[args...]
+  for i = 1:length(args)
+    types[i+3] == Object && (args[i] = toobject(args[i]))
+  end
+
   result = ccal(cmsgsend, ctypes[1], tuple(ctypes[2:end]...),
                 obj, sel, args...)
   types[1] in (Object, Selector) && return types[1](result)
