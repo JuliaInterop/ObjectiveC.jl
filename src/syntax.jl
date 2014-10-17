@@ -10,7 +10,7 @@ function calltransform(ex::Expr)
   end
   all(arg->isexpr(arg, :(:)) && isexpr(arg.args[1], Symbol), args) || callerror()
   msg = join(vcat([arg.args[1] for arg in args], ""), ":") |> Selector
-  args = [arg.args[2] for arg in args]
+  args = [objcm(arg.args[2]) for arg in args]
   :(message($obj, $msg, $(args...)))
 end
 
@@ -18,8 +18,8 @@ objcm(ex::Expr) =
   isexpr(ex, :hcat) ? calltransform(ex) :
     Expr(ex.head, map(objcm, ex.args)...)
 
-objcm(ex) = ex
+objcm(ex) = esc(ex)
 
 macro objc(ex)
-  esc(objcm(ex))
+  objcm(ex)
 end
