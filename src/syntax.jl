@@ -6,20 +6,20 @@ function calltransform(ex::Expr)
   isempty(args) && callerror()
   if isexpr(args[1], Symbol)
     length(args) > 1 && callerror()
-    return :(message($obj, $(Selector(args[1]))))
+    return :($message($obj, $(Selector(args[1]))))
   end
   all(arg->isexpr(arg, :(:)) && isexpr(arg.args[1], Symbol), args) || callerror()
   msg = join(vcat([arg.args[1] for arg in args], ""), ":") |> Selector
   args = [objcm(arg.args[2]) for arg in args]
-  :(message($obj, $msg, $(args...)))
+  :($message($obj, $msg, $(args...)))
 end
 
 objcm(ex::Expr) =
   isexpr(ex, :hcat) ? calltransform(ex) :
     Expr(ex.head, map(objcm, ex.args)...)
 
-objcm(ex) = esc(ex)
+objcm(ex) = ex
 
 macro objc(ex)
-  objcm(ex)
+  esc(objcm(ex))
 end
