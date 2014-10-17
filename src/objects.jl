@@ -4,11 +4,10 @@ end
 
 convert(::Type{Ptr{Void}}, obj::Object) = obj.ptr
 
+class(obj) =
+  ccall(:object_getClass, Ptr{Void}, (Ptr{Void},),
+        obj) |> Class
+
 Object(p::Ptr{Void}) = Object{name(class(p))}(p)
-
-objc_msgsend(obj, sel) = ccall(:objc_msgSend, Ptr{Void}, (Ptr{Void}, Ptr{Void}),
-                               obj, sel)
-
-message(obj, sel) = objc_msgsend(obj, sel)
 
 show{T}(io::IO, obj::Object{T}) = print(io, T, " Object")

@@ -31,10 +31,6 @@ function super(class::Class)
   Class(ptr)
 end
 
-class(obj) =
-  ccall(:object_getClass, Ptr{Void}, (Ptr{Void},),
-        obj) |> Class
-
 function show(io::IO, class::Class)
   ismeta(class) && print(io, "^")
   print(io, name(class))
