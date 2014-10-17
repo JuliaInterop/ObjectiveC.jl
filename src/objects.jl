@@ -10,3 +10,5 @@ objc_msgsend(obj, sel) = ccall(:objc_msgSend, Ptr{Void}, (Ptr{Void}, Ptr{Void}),
                                obj, sel)
 
 message(obj, sel) = objc_msgsend(obj, sel)
+
+show{T}(io::IO, obj::Object{T}) = print(io, T, " Object")
