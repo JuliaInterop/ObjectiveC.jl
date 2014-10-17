@@ -3,12 +3,18 @@ module ObjectiveC
 using Lazy
 
 # Types & Reflection
+
+import Base: show, convert, super, methods
+
 include("selectors.jl")
 include("classes.jl")
 include("objects.jl")
 include("methods.jl")
 
 # Calling Machinery
+
+export @objc
+
 include("call.jl")
 include("syntax.jl")
 
