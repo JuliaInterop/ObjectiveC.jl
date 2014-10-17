@@ -47,5 +47,5 @@ function methods(class::Class)
   meths′ = [unsafe_load(meths, i) for i = 1:count[1]]
   c_free(meths)
   meths = [ccall(:method_getName, Ptr{Void}, (Ptr{Void},), meth) for meth in meths′]
-  return map(meth->Selector(meth), meths)
+  return map(meth->selname(meth), meths)
 end
