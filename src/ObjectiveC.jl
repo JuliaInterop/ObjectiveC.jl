@@ -13,7 +13,7 @@ include("methods.jl")
 
 # Calling Machinery
 
-export @objc
+export @objc, @classes
 
 include("call.jl")
 include("syntax.jl")

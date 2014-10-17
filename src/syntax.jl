@@ -35,3 +35,11 @@ objcm(ex) = ex
 macro objc(ex)
   esc(objcm(ex))
 end
+
+# Import Classes
+
+macro classes (names)
+  isexpr(names, Symbol) ? (names = [names]) : (names = names.args)
+  Expr(:block, [:(const $(esc(name)) = Class($(Expr(:quote, name))))
+                for name in names]...)
+end
