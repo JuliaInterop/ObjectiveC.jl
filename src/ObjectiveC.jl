@@ -20,6 +20,7 @@ include("syntax.jl")
 
 # API wrappers
 include("cocoa.jl")
+include("foundation.jl")
 
 # Import some classes
 for c in :[NSObject NSString NSArray].args
