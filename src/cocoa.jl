@@ -5,6 +5,7 @@ using ObjectiveC
 dlopen("/System/Library/Frameworks/AppKit.framework/Versions/C/Resources/BridgeSupport/AppKit")
 
 for c in :[NSAlert
+           NSAutoreleasePool
            NSWindow
            NSColor].args
   @eval $(Expr(:export, c))
