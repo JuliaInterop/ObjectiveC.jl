@@ -1,5 +1,16 @@
 callerror() = error("ObjectiveC call: use [obj method] or [obj method:param ...]")
 
+function flatvcat(ex::Expr)
+  any(ex->isexpr(ex, :row), ex.args) || return ex
+  flat = Expr(:hcat)
+  for row in ex.args
+    isexpr(row, :row) ?
+      push!(flat.args, row.args...) :
+      push!(flat.args, row)
+  end
+  return calltransform(flat)
+end
+
 function calltransform(ex::Expr)
   obj = objcm(ex.args[1])
   args = ex.args[2:end]
@@ -16,7 +27,8 @@ end
 
 objcm(ex::Expr) =
   isexpr(ex, :hcat) ? calltransform(ex) :
-    Expr(ex.head, map(objcm, ex.args)...)
+  isexpr(ex, :vcat) ? flatvcat(ex) :
+  Expr(ex.head, map(objcm, ex.args)...)
 
 objcm(ex) = ex
 
