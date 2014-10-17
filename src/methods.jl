@@ -13,25 +13,25 @@ implementation(m::Ptr) =
         m)
 
 # From https://developer.apple.com/library/mac/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtTypeEncodings.html
-typeencodings = Dict('c' => Cchar,
-                     'i' => Cint,
-                     's' => Cshort,
-                     'l' => Clong,
-                     'q' => Clonglong,
-                     'C' => Cuchar,
-                     'I' => Cuint,
-                     'S' => Cushort,
-                     'L' => Culong,
-                     'Q' => Culonglong,
-                     'f' => Cfloat,
-                     'd' => Cdouble,
-                     'B' => Bool,
-                     'v' => Void,
-                     '*' => Ptr{Cchar},
-                     '@' => Object,
-                     '#' => Class,
-                     ':' => Selector,
-                     '^' => Ptr)
+typeencodings = ['c' => Cchar,
+                 'i' => Cint,
+                 's' => Cshort,
+                 'l' => Clong,
+                 'q' => Clonglong,
+                 'C' => Cuchar,
+                 'I' => Cuint,
+                 'S' => Cushort,
+                 'L' => Culong,
+                 'Q' => Culonglong,
+                 'f' => Cfloat,
+                 'd' => Cdouble,
+                 'B' => Bool,
+                 'v' => Void,
+                 '*' => Ptr{Cchar},
+                 '@' => Object,
+                 '#' => Class,
+                 ':' => Selector,
+                 '^' => Ptr]
 
 # Other modifiers
 # r const
@@ -55,7 +55,7 @@ function nexttype(io::IO)
 end
 
 function parseencoding(io::IO)
-  types = []
+  types = {}
   while !eof(io)
     t = nexttype(io)
     t == nothing || push!(types, t)
