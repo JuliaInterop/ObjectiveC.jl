@@ -2,10 +2,17 @@ module ObjectiveC
 
 using Lazy
 
-include("classes.jl")
+# Types & Reflection
 include("selectors.jl")
+include("classes.jl")
 include("objects.jl")
+include("methods.jl")
+
+# Calling Machinery
+include("call.jl")
 include("syntax.jl")
+
+# API wrappers
 include("cocoa.jl")
 
 # Import some classes
