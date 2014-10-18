@@ -5,6 +5,7 @@ using Lazy
 # Types & Reflection
 
 import Base: show, convert, super, methods
+export @sel_str, signature
 
 include("selectors.jl")
 include("classes.jl")
