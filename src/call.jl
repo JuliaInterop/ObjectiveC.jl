@@ -26,6 +26,7 @@ end
 
 toobject(o::Object) = o
 toobject(c::Class) = c
+toobject(p::Ptr) = p
 
 ctype(x) = x
 ctype(o::Type{Object}) = Ptr{Void}
