@@ -48,7 +48,7 @@ const skip = Set(['r', 'V',
 function nexttype(io::IO)
   c = read(io, Char)
   c in skip && return
-  haskey(typeencodings, c) || error("Can't parse type encoding: $(takebuf_string(io))")
+  haskey(typeencodings, c) || error("Unsupported method type: $(takebuf_string(io))")
   t = typeencodings[c]
   t == Ptr && (t = Ptr{nexttype(io)})
   return t
