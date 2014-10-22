@@ -1,4 +1,4 @@
-export YES, NO, nil
+export YES, NO, nil, hostname
 
 for c in :[NSObject
            NSString
