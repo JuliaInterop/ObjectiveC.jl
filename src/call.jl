@@ -39,7 +39,7 @@ function message(obj, sel, args...)
   obj = toobject(obj)
   clarse = class(obj)
   m = method(clarse, sel)
-  m == C_NULL && error("$(clarse) does not respond to $sel")
+  m == C_NULL && error("$clarse does not respond to $sel")
   types = signature(m)
   ctypes = ctype(types)
 
