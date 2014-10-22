@@ -1,3 +1,36 @@
+# Selectors
+
+selname(s::Ptr{Void}) =
+  ccall(:sel_getName, Ptr{Cchar}, (Ptr{Void},),
+        s) |> bytestring
+
+immutable Selector#{name}
+  ptr::Ptr{Void}
+  Selector(ptr::Ptr{Void}) = new(ptr)
+end
+
+#Selector(name::Symbol, ptr::Ptr{Void}) = Selector{name}(ptr)
+#Selector(ptr::Ptr{Void}) = Selector(symbol(selname(ptr)), ptr)
+
+convert(::Type{Ptr{Void}}, sel::Selector) = sel.ptr
+
+function Selector(name)
+  Selector(#symbol(name),
+           ccall(:sel_registerName, Ptr{Void}, (Ptr{Cchar},),
+                 string(name)))
+end
+
+macro sel_str(name)
+  Selector(name)
+end
+
+name(sel::Selector) = selname(sel.ptr)
+
+function show(io::IO, sel::Selector)
+  print(io, "sel")
+  show(io, string(name(sel)))
+end
+
 # Classes
 
 immutable Class
@@ -43,3 +76,21 @@ function methods(class::Class)
   meths = [ccall(:method_getName, Ptr{Void}, (Ptr{Void},), meth) for meth in meths′]
   return map(meth->selname(meth), meths)
 end
+
+# Objects
+
+immutable Object{T}
+  ptr::Ptr{Void}
+end
+
+convert(::Type{Ptr{Void}}, obj::Object) = obj.ptr
+
+class(obj) =
+  ccall(:object_getClass, Ptr{Void}, (Ptr{Void},),
+        obj) |> Class
+
+Object(p::Ptr{Void}) = Object{name(class(p))}(p)
+
+methods(obj::Object) = methods(class(obj))
+
+show{T}(io::IO, obj::Object{T}) = print(io, T, " Object")

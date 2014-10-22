@@ -7,9 +7,7 @@ using Lazy
 import Base: show, convert, super, methods
 export @sel_str, signature
 
-include("selectors.jl")
-include("classes.jl")
-include("objects.jl")
+include("primitives.jl")
 include("methods.jl")
 
 # Calling Machinery
