@@ -17,6 +17,10 @@ export @objc, @classes
 include("call.jl")
 include("syntax.jl")
 
+# Class Creation
+
+include("classes.jl")
+
 # API wrappers
 include("foundation.jl")
 
