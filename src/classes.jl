@@ -1,17 +1,22 @@
 function allocclass(name, super)
   ptr = ccall(:objc_allocateClassPair, Ptr{Void}, (Ptr{Void}, Ptr{Cchar}, Csize_t),
               super, name, 0)
+  ptr == C_NULL && error("Couldn't allocate class $name")
+  return Class(ptr)
 end
 
-ctype(Object)
+function register(class::Class)
+  ccall(:objc_registerClassPair, Void, (Ptr{Void},),
+        class)
+end
 
-# Syntax
+function addmethod(class::Class, sel::Selector, imp::Ptr{Void}, types::String)
+  result = ccall(:class_addMethod, Bool, (Ptr{Void}, Ptr{Void}, Ptr{Void}, Ptr{Cchar}),
+                 class, sel, imp, types)
+  result || error("Couldn't add method $sel to class $class")
+end
 
-param(ex) =
-  isexpr(ex, :(::)) ? ex.args[1] : ex
-
-params(ex) =
-  map(param, ex.args[2:end])
+# Syntax Utils
 
 typehint(ex) =
   isexpr(ex, :(::)) ? ex.args[2] : :Any
@@ -19,10 +24,11 @@ typehint(ex) =
 typehints(ex) =
   map(typehint, ex.args[2:end])
 
-macro ocimp (func)
-  params(func.args[1]), typehints(func.args[1])
+# Syntax
+
+macro ocfunc (func, ts)
+  isexpr(ts, Tuple) && (ts = Expr(:tuple, ts...))
+  ctypes = map(T->ctype(eval(current_module(), T)), ts.args)
 end
 
-@ocimp function foo(x, y::Int)
-  x+y
 end
