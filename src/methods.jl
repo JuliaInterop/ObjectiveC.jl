@@ -79,10 +79,12 @@ signature(obj::Object, sel::Selector) =
 # Creating Methods
 
 const revtypeencodings = [v => k for (k, v) in typeencodings]
+Base.eltype{T}(p::Type{Ptr{T}}) = T
 
 function encodetype(ts...)
   buf = IOBuffer()
   for t in ts
+    (t <: Ptr) && (print(buf, "^"); t = eltype(t))
     haskey(revtypeencodings, t) || error("$t isn't a valid ObjectiveC type")
     print(buf, revtypeencodings[t])
   end
