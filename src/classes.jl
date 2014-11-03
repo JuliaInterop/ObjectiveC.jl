@@ -31,7 +31,7 @@ addmethod(class::Class, sel::Selector, imp::Ptr{Void}, types::String) =
   !ccall(:class_addMethod, Bool, (Ptr{Void}, Ptr{Void}, Ptr{Void}, Ptr{Cchar}),
          class, sel, imp, types) ?
     error("Couldn't add method $sel to class $class") :
-    return
+    nothing
 
 # Syntax
 
