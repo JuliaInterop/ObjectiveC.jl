@@ -83,7 +83,7 @@ macro class (def)
     end
     push!(expr.args, ex)
   end
-  :(@objc $expr)
+  :(@objc $expr; nothing)
 end
 
 # quote
