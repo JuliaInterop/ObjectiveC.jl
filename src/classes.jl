@@ -59,8 +59,8 @@ macro class (def)
   sym = Expr(:quote, name)
   super = isexpr(def.args[2], :(<:)) ? def.args[2].args[2] : :NSObject
   expr = quote
-    isdefined($(Expr(:quote, name))) ||
-      (const $name = $createclass($(Expr(:quote, name)), $Class($(Expr(:quote, super)))))
+    classexists($sym) || createclass($sym, Class($(Expr(:quote, super))))
+    isdefined($sym) || (const $(esc(name)) = Class($sym))
   end
   for ex in def.args[3].args
     if isexpr(ex, :macrocall) && ex.args[1] in (symbol("@+"), symbol("@-"))
