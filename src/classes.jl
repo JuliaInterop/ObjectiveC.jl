@@ -27,11 +27,14 @@ methodtypeenc(class::Class, sel::Selector) = methodtypeenc(getmethod(class, sel)
 
 methodtype(args...) = methodtypeenc(args...) |> parseencoding
 
-addmethod(class::Class, sel::Selector, imp::Ptr{Void}, types::String) =
-  !ccall(:class_addMethod, Bool, (Ptr{Void}, Ptr{Void}, Ptr{Void}, Ptr{Cchar}),
-         class, sel, imp, types) ?
-    error("Couldn't add method $sel to class $class") :
-    nothing
+replacemethod(class::Class, sel::Selector, imp::Ptr{Void}, types::String) =
+  ccall(:class_replaceMethod, Bool, (Ptr{Void}, Ptr{Void}, Ptr{Void}, Ptr{Cchar}),
+        class, sel, imp, types)
+
+function setmethod(class::Class, sel::Selector, imp::Ptr{Void}, types::String)
+#   meth = getmethod(class, sel)
+  replacemethod(class, sel, imp, types)
+end
 
 # Syntax
 
@@ -60,7 +63,7 @@ function createmethod(class, ex)
   f = "$(class)_$(name(sel))" |> symbol
   return quote
     $(esc(createdef(f, args, Ts, body, ret)))
-    addmethod($(esc(class)), $sel,
+    setmethod($(esc(class)), $sel,
               cfunction($(esc(f)), $(ctype(ret)), $(Expr(:tuple, map(ctype, Ts)...))),
               $typ)
   end
