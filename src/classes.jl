@@ -47,15 +47,16 @@ function createmethod(class, ex)
 
   f = "$(class)_$(name(sel))" |> symbol
   return quote
-    $(createdef(f, args, Ts, body, ret))
-    $addmethod($class, $sel,
-               cfunction($f, $(ctype(ret)), $(Expr(:tuple, map(ctype, Ts)...))),
-               $typ)
+    $(esc(createdef(f, args, Ts, body, ret)))
+    addmethod($(esc(class)), $sel,
+              cfunction($(esc(f)), $(ctype(ret)), $(Expr(:tuple, map(ctype, Ts)...))),
+              $typ)
   end
 end
 
 macro class (def)
   name = namify(def.args[2])
+  sym = Expr(:quote, name)
   super = isexpr(def.args[2], :(<:)) ? def.args[2].args[2] : :NSObject
   expr = quote
     isdefined($(Expr(:quote, name))) ||
@@ -67,7 +68,7 @@ macro class (def)
     end
     push!(expr.args, ex)
   end
-  :(@objc $(esc(expr)))
+  :(@objc $expr)
 end
 
 # quote
