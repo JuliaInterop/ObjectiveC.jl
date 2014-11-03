@@ -12,8 +12,7 @@ end
 convert(::Type{Ptr{Void}}, sel::Selector) = sel.ptr
 
 function Selector(name)
-  Selector(#symbol(name),
-           ccall(:sel_registerName, Ptr{Void}, (Ptr{Cchar},),
+  Selector(ccall(:sel_registerName, Ptr{Void}, (Ptr{Cchar},),
                  string(name)))
 end
 
@@ -37,12 +36,16 @@ end
 
 convert(::Type{Ptr{Void}}, class::Class) = class.ptr
 
+classptr(name) = ccall(:objc_getClass, Ptr{Void}, (Ptr{Cchar},),
+                       string(name))
+
 function Class(name)
-  ptr = ccall(:objc_getClass, Ptr{Void}, (Ptr{Cchar},),
-              string(name))
+  ptr = classptr(name)
   ptr == C_NULL && error("Couldn't find class $name")
   return Class(ptr)
 end
+
+classexists(name) = classptr(name) ≠ C_NULL
 
 name(class::Class) =
   ccall(:class_getName, Ptr{Cchar}, (Ptr{Void},),
