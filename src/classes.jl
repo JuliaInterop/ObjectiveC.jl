@@ -48,9 +48,9 @@ function createmethod(class, ex)
   f = gensym("f")
   return quote
     $(createdef(f, args, Ts, body, ret))
-    addmethod($class, $sel,
-              cfunction($f, $(ctype(ret)), $(Expr(:tuple, map(ctype, Ts)...))),
-              $typ)
+    $addmethod($class, $sel,
+               cfunction($f, $(ctype(ret)), $(Expr(:tuple, map(ctype, Ts)...))),
+               $typ)
   end
 end
 
@@ -59,7 +59,7 @@ macro class (def)
   super = isexpr(def.args[2], :(<:)) ? def.args[2].args[2] : :NSObject
   expr = quote
     isdefined($(Expr(:quote, name))) ||
-      (const $name = createclass($(Expr(:quote, name)), Class($(Expr(:quote, super)))))
+      (const $name = $createclass($(Expr(:quote, name)), $Class($(Expr(:quote, super)))))
   end
   for ex in def.args[3].args
     if isexpr(ex, :macrocall) && ex.args[1] in (symbol("@+"), symbol("@-"))
