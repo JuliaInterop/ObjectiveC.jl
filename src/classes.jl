@@ -45,7 +45,7 @@ function createmethod(class, ex)
   args = [:self, :_cmd, args...]
   typ = encodetype(ret, Ts...)
 
-  f = gensym("f")
+  f = "$(class)_$(name(sel))" |> symbol
   return quote
     $(createdef(f, args, Ts, body, ret))
     $addmethod($class, $sel,
