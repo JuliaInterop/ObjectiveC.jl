@@ -4,13 +4,10 @@ selname(s::Ptr{Void}) =
   ccall(:sel_getName, Ptr{Cchar}, (Ptr{Void},),
         s) |> bytestring
 
-immutable Selector#{name}
+immutable Selector
   ptr::Ptr{Void}
   Selector(ptr::Ptr{Void}) = new(ptr)
 end
-
-#Selector(name::Symbol, ptr::Ptr{Void}) = Selector{name}(ptr)
-#Selector(ptr::Ptr{Void}) = Selector(symbol(selname(ptr)), ptr)
 
 convert(::Type{Ptr{Void}}, sel::Selector) = sel.ptr
 
@@ -79,7 +76,7 @@ end
 
 # Objects
 
-immutable Object{T}
+immutable Object
   ptr::Ptr{Void}
 end
 
@@ -89,8 +86,6 @@ class(obj) =
   ccall(:object_getClass, Ptr{Void}, (Ptr{Void},),
         obj) |> Class
 
-Object(p::Ptr{Void}) = Object{name(class(p))}(p)
-
 methods(obj::Object) = methods(class(obj))
 
-show{T}(io::IO, obj::Object{T}) = print(io, T, " Object")
+show(io::IO, obj::Object) = print(io, class(obj), " Object")
