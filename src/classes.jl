@@ -21,14 +21,6 @@ addmethod(class::Class, sel::Selector, imp::Ptr{Void}, types::String) =
     error("Couldn't add method $sel to class $class") :
     return
 
-# Syntax Utils
-
-typehint(ex) =
-  isexpr(ex, :(::)) ? ex.args[2] : :Any
-
-typehints(ex) =
-  map(typehint, ex.args[2:end])
-
 # Syntax
 
 function createdef(f, args, Ts, body, ret)
