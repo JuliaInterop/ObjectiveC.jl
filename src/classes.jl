@@ -15,6 +15,18 @@ end
 
 createclass(name, super) = allocclass(name, super) |> register
 
+getmethod(class::Class, sel::Selector) =
+  ccall(:class_getInstanceMethod, Ptr{Void}, (Ptr{Void}, Ptr{Void}),
+        class, sel)
+
+methodtypeenc(method::Ptr) =
+  ccall(:method_getTypeEncoding, Ptr{Cchar}, (Ptr{Void},),
+        method) |> bytestring
+
+methodtypeenc(class::Class, sel::Selector) = methodtypeenc(getmethod(class, sel))
+
+methodtype(args...) = methodtypeenc(args...) |> parseencoding
+
 addmethod(class::Class, sel::Selector, imp::Ptr{Void}, types::String) =
   !ccall(:class_addMethod, Bool, (Ptr{Void}, Ptr{Void}, Ptr{Void}, Ptr{Cchar}),
          class, sel, imp, types) ?
