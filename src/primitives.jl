@@ -1,3 +1,5 @@
+export Selector, Class, Object
+
 # Selectors
 
 selname(s::Ptr{Void}) =
