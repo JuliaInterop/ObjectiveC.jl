@@ -32,7 +32,9 @@ replacemethod(class::Class, sel::Selector, imp::Ptr{Void}, types::String) =
         class, sel, imp, types)
 
 function setmethod(class::Class, sel::Selector, imp::Ptr{Void}, types::String)
-#   meth = getmethod(class, sel)
+  meth = getmethod(class, sel)
+  meth ≠ C_NULL && methodtype(meth) != parseencoding(types) &&
+    error("New method $(name(sel)) of $class must match $(methodtype(meth))")
   replacemethod(class, sel, imp, types)
 end
 
