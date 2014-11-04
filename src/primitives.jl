@@ -79,7 +79,7 @@ end
 
 # Objects
 
-immutable Object
+type Object
   ptr::Ptr{Void}
 end
 
@@ -92,3 +92,10 @@ class(obj) =
 methods(obj::Object) = methods(class(obj))
 
 show(io::IO, obj::Object) = print(io, class(obj), " Object")
+
+release(obj) = @objc [obj release]
+
+function Base.gc(obj::Object)
+  finalizer(obj, release)
+  obj
+end
