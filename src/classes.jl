@@ -67,7 +67,7 @@ function createmethod(class, ex)
   f = "$(class)_$(name(sel))" |> symbol
   return quote
     $(esc(createdef(f, args, Ts, body, ret)))
-    setmethod($(esc(class)), $sel,
+    setmethod($(instance ? esc(class) : :(class($(esc(class))))), $sel,
               cfunction($(esc(f)), $(ctype(ret)), $(Expr(:tuple, map(ctype, Ts)...))),
               $typ)
   end
