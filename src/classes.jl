@@ -45,7 +45,9 @@ function createdef(f, args, Ts, body, ret)
   for (arg, T) in zip(args, Ts)
     T in (Object, Selector) && push!(def.args[2].args, :($arg = $T($arg)))
   end
-  push!(def.args[2].args, :(convert($(ctype(ret)), $body)))
+  push!(def.args[2].args, ret == Void ? # Ugly workaround for 0.3
+                            :($body; nothing) :
+                            :(convert($(ctype(ret)), $body)))
   return def
 end
 
