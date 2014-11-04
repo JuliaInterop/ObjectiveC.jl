@@ -56,8 +56,8 @@ function createmethod(class, ex)
   ret = eval(current_module(), ex.args[2])
   params = ex.args[3:end-1]
   sel = @_ params map(x->x.args[1], _) join(_, ":") string(_, ":") Selector
-  Ts = @>> params map(x->x.args[2].args[2]) map(T->eval(current_module(), T))
-  args = @>> params map(x->x.args[2].args[3])
+  Ts = @>> params map(x->x.args[2]) map(x->isa(x, Symbol) ? Object : x.args[2]) map(T->eval(current_module(), T))
+  args = @>> params map(x->x.args[2]) map(x->isa(x, Symbol) ? x : x.args[3])
   body = ex.args[end]
 
   Ts = [Object, Selector, Ts...]
