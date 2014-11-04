@@ -16,3 +16,10 @@ toobject(s::String) = @objc [[NSString alloc] initWithUTF8String:s]
 
 hostname() =
   @objc [[[NSHost currentHost] localizedName] UTF8String] |> bytestring
+
+release(obj) = @objc [obj release]
+
+function Base.gc(obj::Object)
+  finalizer(obj, release)
+  obj
+end
