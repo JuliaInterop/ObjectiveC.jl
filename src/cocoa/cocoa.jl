@@ -1,6 +1,6 @@
 module Cocoa
 
-export init, window
+export window
 
 using ObjectiveC
 
