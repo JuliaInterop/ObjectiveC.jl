@@ -5,7 +5,7 @@ export init, window
 using ObjectiveC
 
 ObjectiveC.framework("AppKit")
-dlopen(Pkg.dir("ObjectiveC", "c", "cocoa"))
+dlopen(Pkg.dir("ObjectiveC", "deps", "cocoa"))
 include("constants.jl")
 
 @classes NSWindow, NSApplication, NSSound, NSTimer
