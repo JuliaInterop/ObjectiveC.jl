@@ -26,4 +26,4 @@ include("foundation.jl")
 
 end
 
-include("cocoa.jl")
+include("cocoa/cocoa.jl")

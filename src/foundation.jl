@@ -1,6 +1,7 @@
 export YES, NO, nil, hostname
 
 for c in :[NSObject
+           NSBundle
            NSString
            NSArray
            NSHost].args
@@ -23,3 +24,14 @@ function Base.gc(obj::Object)
   finalizer(obj, release)
   obj
 end
+
+function loadbundle(path)
+  @objc begin
+    bundle = [NSBundle bundleWithPath:path]
+    bundle.ptr |> int |> bool || error("Bundle $path not found")
+    [bundle load] |> bool || error("Couldn't load bundle $path")
+    return
+  end
+end
+
+framework(name) = loadbundle("/System/Library/Frameworks/$name.framework")
