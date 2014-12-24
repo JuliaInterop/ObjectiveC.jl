@@ -90,6 +90,7 @@ pop() = play("Pop")
 # Alert window
 
 @classes NSAlert
+export NSAlert
 
 export alert
 
