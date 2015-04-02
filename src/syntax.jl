@@ -28,7 +28,8 @@ end
 objcm(ex::Expr) =
   isexpr(ex, :hcat) ? calltransform(ex) :
   isexpr(ex, :vcat) ? flatvcat(ex) :
-  Expr(ex.head, map(objcm, ex.args)...)
+  isexpr(ex, :block, :let) ? Expr(:block, map(objcm, ex.args)...) :
+  esc(ex)
 
 objcm(ex) = ex
 
