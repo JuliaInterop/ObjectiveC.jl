@@ -5,7 +5,7 @@ export window
 using ObjectiveC
 
 ObjectiveC.framework("AppKit")
-dlopen(Pkg.dir("ObjectiveC", "deps", "cocoa"))
+Libdl.dlopen(Pkg.dir("ObjectiveC", "deps", "cocoa"))
 include("constants.jl")
 
 @classes NSWindow, NSApplication, NSSound, NSTimer

@@ -4,7 +4,7 @@ using Lazy
 
 # Types & Reflection
 
-import Base: show, convert, super, methods
+import Base: show, convert, unsafe_convert, super, methods
 export @sel_str, signature
 
 include("primitives.jl")
@@ -26,4 +26,4 @@ include("foundation.jl")
 
 end
 
-include("cocoa/cocoa.jl")
+# include("cocoa/cocoa.jl")

@@ -28,8 +28,8 @@ end
 function loadbundle(path)
   @objc begin
     bundle = [NSBundle bundleWithPath:path]
-    bundle.ptr |> int |> bool || error("Bundle $path not found")
-    [bundle load] |> bool || error("Couldn't load bundle $path")
+    bundle.ptr |> Int |> Bool || error("Bundle $path not found")
+    [bundle load] |> Bool || error("Couldn't load bundle $path")
     return
   end
 end

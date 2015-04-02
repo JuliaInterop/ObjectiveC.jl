@@ -13,25 +13,25 @@ implementation(m::Ptr) =
         m)
 
 # From https://developer.apple.com/library/mac/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtTypeEncodings.html
-const typeencodings = ['c' => Cchar,
-                       'i' => Cint,
-                       's' => Cshort,
-                       'l' => Clong,
-                       'q' => Clonglong,
-                       'C' => Cuchar,
-                       'I' => Cuint,
-                       'S' => Cushort,
-                       'L' => Culong,
-                       'Q' => Culonglong,
-                       'f' => Cfloat,
-                       'd' => Cdouble,
-                       'B' => Bool,
-                       'v' => Void,
-                       '*' => Ptr{Cchar},
-                       '@' => Object,
-                       '#' => Class,
-                       ':' => Selector,
-                       '^' => Ptr]
+const typeencodings = Dict('c' => Cchar,
+                           'i' => Cint,
+                           's' => Cshort,
+                           'l' => Clong,
+                           'q' => Clonglong,
+                           'C' => Cuchar,
+                           'I' => Cuint,
+                           'S' => Cushort,
+                           'L' => Culong,
+                           'Q' => Culonglong,
+                           'f' => Cfloat,
+                           'd' => Cdouble,
+                           'B' => Bool,
+                           'v' => Void,
+                           '*' => Ptr{Cchar},
+                           '@' => Object,
+                           '#' => Class,
+                           ':' => Selector,
+                           '^' => Ptr)
 
 # Other modifiers
 # r const
@@ -55,7 +55,7 @@ function nexttype(io::IO)
 end
 
 function parseencoding(io::IO)
-  types = {}
+  types = c()
   while !eof(io)
     t = nexttype(io)
     t == nothing || push!(types, t)
@@ -79,7 +79,6 @@ signature(obj::Object, sel::Selector) =
 # Creating Methods
 
 const revtypeencodings = [v => k for (k, v) in typeencodings]
-Base.eltype{T}(p::Type{Ptr{T}}) = T
 
 function encodetype(ts...)
   buf = IOBuffer()

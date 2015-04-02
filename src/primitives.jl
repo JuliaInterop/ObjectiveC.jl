@@ -11,11 +11,11 @@ immutable Selector
   Selector(ptr::Ptr{Void}) = new(ptr)
 end
 
-convert(::Type{Ptr{Void}}, sel::Selector) = sel.ptr
+unsafe_convert(::Type{Ptr{Void}}, sel::Selector) = sel.ptr
 
 function Selector(name)
   Selector(ccall(:sel_registerName, Ptr{Void}, (Ptr{Cchar},),
-                 string(name)))
+                 pointer(string(name))))
 end
 
 macro sel_str(name)
@@ -36,10 +36,10 @@ immutable Class
   Class(ptr::Ptr{Void}) = new(ptr)
 end
 
-convert(::Type{Ptr{Void}}, class::Class) = class.ptr
+unsafe_convert(::Type{Ptr{Void}}, class::Class) = class.ptr
 
 classptr(name) = ccall(:objc_getClass, Ptr{Void}, (Ptr{Cchar},),
-                       string(name))
+                       pointer(string(name)))
 
 function Class(name)
   ptr = classptr(name)
@@ -85,7 +85,7 @@ type Object
   ptr::Ptr{Void}
 end
 
-convert(::Type{Ptr{Void}}, obj::Object) = obj.ptr
+unsafe_convert(::Type{Ptr{Void}}, obj::Object) = obj.ptr
 
 class(obj) =
   ccall(:object_getClass, Ptr{Void}, (Ptr{Void},),
