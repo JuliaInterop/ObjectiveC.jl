@@ -7,6 +7,8 @@ using Lazy
 import Base: show, convert, unsafe_convert, super, methods
 export @sel_str, signature
 
+int2bool(x::Integer) = x != 0
+
 include("primitives.jl")
 include("methods.jl")
 

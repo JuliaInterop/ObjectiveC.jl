@@ -55,7 +55,7 @@ name(class::Class) =
 
 ismeta(class::Class) =
   ccall(:class_isMetaClass, Cint, (Ptr{Void},),
-        class) |> bool
+        class) |> int2bool
 
 function super(class::Class)
   ptr = ccall(:class_getSuperclass, Ptr{Void}, (Ptr{Void},),
