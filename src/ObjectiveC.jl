@@ -1,6 +1,6 @@
 module ObjectiveC
 
-using Lazy
+using Lazy, MacroTools
 
 # Types & Reflection
 
