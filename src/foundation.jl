@@ -30,7 +30,6 @@ function loadbundle(path)
     bundle = [NSBundle bundleWithPath:path]
     bundle.ptr |> Int |> int2bool || error("Bundle $path not found")
     [bundle load] |> int2bool || error("Couldn't load bundle $path")
-    return
   end
 end
 
