@@ -26,11 +26,11 @@ function Base.gc(obj::Object)
 end
 
 function loadbundle(path)
-  @objc begin
-    bundle = [NSBundle bundleWithPath:path]
-    bundle.ptr |> Int |> int2bool || error("Bundle $path not found")
-    [bundle load] |> int2bool || error("Couldn't load bundle $path")
-  end
+  bundle = @objc [NSBundle bundleWithPath:path]
+  bundle.ptr |> Int |> int2bool || error("Bundle $path not found")
+  loadedStuff = @objc [bundle load]
+  loadedStuff |> int2bool || error("Couldn't load bundle $path")
+  return
 end
 
 framework(name) = loadbundle("/System/Library/Frameworks/$name.framework")
