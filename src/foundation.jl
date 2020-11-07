@@ -1,3 +1,7 @@
+using Libdl
+
+Libdl.dlopen("/System/Library/Frameworks/Foundation.framework/Foundation")
+
 export YES, NO, nil, hostname
 
 for c in :[NSObject
@@ -16,11 +20,11 @@ const nil = C_NULL
 toobject(s::String) = @objc [[NSString alloc] initWithUTF8String:s]
 
 hostname() =
-  @objc [[[NSHost currentHost] localizedName] UTF8String] |> bytestring
+  (@objc [[[NSHost currentHost] localizedName] UTF8String]) |> unsafe_string
 
 release(obj) = @objc [obj release]
 
-function Base.gc(obj::Object)
+function GC.gc(obj::Object)
   finalizer(obj, release)
   obj
 end

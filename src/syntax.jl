@@ -19,9 +19,10 @@ function calltransform(ex::Expr)
     length(args) > 1 && callerror()
     return :($message($obj, $(Selector(args[1]))))
   end
-  all(arg->isexpr(arg, :(:)) && isexpr(arg.args[1], Symbol), args) || callerror()
-  msg = join(vcat([arg.args[1] for arg in args], ""), ":") |> Selector
-  args = [objcm(arg.args[2]) for arg in args]
+
+  all(arg->isexpr(arg, :call) && isexpr(arg.args[1], Symbol), args) || callerror()
+  msg = join(vcat([arg.args[2] for arg in args], ""), ":") |> Selector
+  args = [objcm(arg.args[3]) for arg in args]
   :($message($obj, $msg, $(args...)))
 end
 
@@ -39,7 +40,7 @@ end
 
 # Import Classes
 
-macro classes (names)
+macro classes(names)
   isexpr(names, Symbol) ? (names = [names]) : (names = names.args)
   Expr(:block, [:(const $(esc(name)) = Class($(Expr(:quote, name))))
                 for name in names]..., nothing)

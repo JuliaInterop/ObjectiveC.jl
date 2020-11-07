@@ -3,7 +3,7 @@
 # varargs functions. Emulates `ccall` but as a function taking a function
 # pointer + types, args etc.
 
-Base.eltype{T}(::Type{Type{T}}) = T
+Base.eltype(::T1) where {T1 <: Type{Type{T}}} where {T} = T
 
 # stagedfunction ccal(f::Ptr, t, ts, vals...)
 #   R = eltype(t)
@@ -29,8 +29,8 @@ toobject(c::Class) = c
 toobject(p::Ptr) = p
 
 ctype(x) = x
-ctype(o::Type{Object}) = Ptr{Void}
-ctype(s::Type{Selector}) = Ptr{Void}
+ctype(o::Type{Object}) = Ptr{Nothing}
+ctype(s::Type{Selector}) = Ptr{Nothing}
 ctype(a::AbstractArray) = map(ctype, a)
 
 const cmsgsend = cglobal(:objc_msgSend)

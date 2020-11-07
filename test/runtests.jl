@@ -1,5 +1,4 @@
 using ObjectiveC
-using Base.Test
+using Test
 
-# write your own tests here
-@test 1 == 1
+@test startswith(read(`hostname`, String), hostname())
