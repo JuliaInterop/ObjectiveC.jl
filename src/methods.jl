@@ -1,15 +1,15 @@
 method(class::Class, sel::Selector) =
-  ccall(:class_getInstanceMethod, Ptr{Void}, (Ptr{Void}, Ptr{Void}),
+  ccall(:class_getInstanceMethod, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}),
         class, sel)
 
 method(obj::Object, sel::Selector) =
   method(class(obj), sel)
 
 types(m::Ptr) =
-  ccall(:method_getTypeEncoding, Ptr{Cchar}, (Ptr{Void},), m) |> bytestring
+  ccall(:method_getTypeEncoding, Ptr{Cchar}, (Ptr{Cvoid},), m) |> unsafe_string
 
 implementation(m::Ptr) =
-  ccall(:method_getImplementation, Ptr{Void}, (Ptr{Void},),
+  ccall(:method_getImplementation, Ptr{Cvoid}, (Ptr{Cvoid},),
         m)
 
 # From https://developer.apple.com/library/mac/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtTypeEncodings.html
@@ -26,7 +26,7 @@ const typeencodings = Dict('c' => Cchar,
                            'f' => Cfloat,
                            'd' => Cdouble,
                            'B' => Bool,
-                           'v' => Void,
+                           'v' => Cvoid,
                            '*' => Ptr{Cchar},
                            '@' => Object,
                            '#' => Class,

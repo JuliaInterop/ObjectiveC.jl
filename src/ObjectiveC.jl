@@ -4,7 +4,7 @@ using Lazy, MacroTools
 
 # Types & Reflection
 
-import Base: show, convert, unsafe_convert, super, methods
+import Base: show, convert, unsafe_convert, supertype, methods
 export @sel_str, signature
 
 int2bool(x::Integer) = x != 0

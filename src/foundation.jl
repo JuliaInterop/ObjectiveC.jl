@@ -16,14 +16,9 @@ const nil = C_NULL
 toobject(s::String) = @objc [[NSString alloc] initWithUTF8String:s]
 
 hostname() =
-  @objc [[[NSHost currentHost] localizedName] UTF8String] |> bytestring
+  @objc [[[NSHost currentHost] localizedName] UTF8String] |> unsafe_string
 
 release(obj) = @objc [obj release]
-
-function Base.gc(obj::Object)
-  finalizer(obj, release)
-  obj
-end
 
 function loadbundle(path)
   bundle = @objc [NSBundle bundleWithPath:path]

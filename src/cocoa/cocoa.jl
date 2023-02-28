@@ -13,10 +13,10 @@ include("constants.jl")
 # Struct creation
 
 nsrect(x, y, w, h) =
-  ccall(:nsmakerect, Ptr{Void}, (Cfloat, Cfloat, Cfloat, Cfloat),
+  ccall(:nsmakerect, Ptr{Cvoid}, (Cfloat, Cfloat, Cfloat, Cfloat),
         x, y, w, h)
 
-NSApp() = cglobal(:NSApp, Ptr{Void}) |> unsafe_load |> ObjectiveC.Object
+NSApp() = cglobal(:NSApp, Ptr{Cvoid}) |> unsafe_load |> ObjectiveC.Object
 
 function initapp()
   @objc begin
@@ -44,7 +44,7 @@ function window(title = "Julia", width = 600, height = 400)
 end
 
 @class type Yielder
-  @+ (Void) tick:timer begin
+  @+ (Cvoid) tick:timer begin
 #     pop()
     yield()
   end

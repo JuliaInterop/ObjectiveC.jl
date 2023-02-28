@@ -2,19 +2,19 @@ export Selector, Class, Object
 
 # Selectors
 
-selname(s::Ptr{Void}) =
-  ccall(:sel_getName, Ptr{Cchar}, (Ptr{Void},),
-        s) |> bytestring
+selname(s::Ptr{Cvoid}) =
+  ccall(:sel_getName, Ptr{Cchar}, (Ptr{Cvoid},),
+        s) |> unsafe_string
 
-immutable Selector
-  ptr::Ptr{Void}
-  Selector(ptr::Ptr{Void}) = new(ptr)
+struct Selector
+  ptr::Ptr{Cvoid}
+  Selector(ptr::Ptr{Cvoid}) = new(ptr)
 end
 
-unsafe_convert(::Type{Ptr{Void}}, sel::Selector) = sel.ptr
+unsafe_convert(::Type{Ptr{Cvoid}}, sel::Selector) = sel.ptr
 
 function Selector(name)
-  Selector(ccall(:sel_registerName, Ptr{Void}, (Ptr{Cchar},),
+  Selector(ccall(:sel_registerName, Ptr{Cvoid}, (Ptr{Cchar},),
                  pointer(string(name))))
 end
 
@@ -31,14 +31,14 @@ end
 
 # Classes
 
-immutable Class
-  ptr::Ptr{Void}
-  Class(ptr::Ptr{Void}) = new(ptr)
+struct Class
+  ptr::Ptr{Cvoid}
+  Class(ptr::Ptr{Cvoid}) = new(ptr)
 end
 
-unsafe_convert(::Type{Ptr{Void}}, class::Class) = class.ptr
+unsafe_convert(::Type{Ptr{Cvoid}}, class::Class) = class.ptr
 
-classptr(name) = ccall(:objc_getClass, Ptr{Void}, (Ptr{Cchar},),
+classptr(name) = ccall(:objc_getClass, Ptr{Cvoid}, (Ptr{Cchar},),
                        pointer(string(name)))
 
 function Class(name)
@@ -50,15 +50,15 @@ end
 classexists(name) = classptr(name) ≠ C_NULL
 
 name(class::Class) =
-  ccall(:class_getName, Ptr{Cchar}, (Ptr{Void},),
-            class) |> bytestring |> symbol
+  ccall(:class_getName, Ptr{Cchar}, (Ptr{Cvoid},),
+            class) |> unsafe_string |> Symbol
 
 ismeta(class::Class) =
-  ccall(:class_isMetaClass, Cint, (Ptr{Void},),
+  ccall(:class_isMetaClass, Cint, (Ptr{Cvoid},),
         class) |> int2bool
 
-function super(class::Class)
-  ptr = ccall(:class_getSuperclass, Ptr{Void}, (Ptr{Void},),
+function supertype(class::Class)
+  ptr = ccall(:class_getSuperclass, Ptr{Cvoid}, (Ptr{Cvoid},),
               class.ptr)
   ptr == C_NULL && return nothing
   Class(ptr)
@@ -71,24 +71,29 @@ end
 
 function methods(class::Class)
   count = Cuint[0]
-  meths = ccall(:class_copyMethodList, Ptr{Ptr{Void}}, (Ptr{Void}, Ptr{Cuint}),
+  meths = ccall(:class_copyMethodList, Ptr{Ptr{Cvoid}}, (Ptr{Cvoid}, Ptr{Cuint}),
                 class, count)
   meths′ = [unsafe_load(meths, i) for i = 1:count[1]]
   c_free(meths)
-  meths = [ccall(:method_getName, Ptr{Void}, (Ptr{Void},), meth) for meth in meths′]
+  meths = [ccall(:method_getName, Ptr{Cvoid}, (Ptr{Cvoid},), meth) for meth in meths′]
   return map(meth->selname(meth), meths)
 end
 
 # Objects
 
-type Object
-  ptr::Ptr{Void}
+mutable struct Object
+  ptr::Ptr{Cvoid}
+
+  function Object(ptr::Ptr{Cvoid})
+    obj = new(ptr)
+    finalizer(release, obj)
+  end
 end
 
-unsafe_convert(::Type{Ptr{Void}}, obj::Object) = obj.ptr
+unsafe_convert(::Type{Ptr{Cvoid}}, obj::Object) = obj.ptr
 
 class(obj) =
-  ccall(:object_getClass, Ptr{Void}, (Ptr{Void},),
+  ccall(:object_getClass, Ptr{Cvoid}, (Ptr{Cvoid},),
         obj) |> Class
 
 methods(obj::Object) = methods(class(obj))
