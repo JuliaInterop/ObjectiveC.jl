@@ -1,3 +1,5 @@
+export @objc, @classes
+
 callerror() = error("ObjectiveC call: use [obj method] or [obj method:param ...]")
 
 function flatvcat(ex::Expr)

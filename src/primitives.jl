@@ -1,4 +1,4 @@
-export Selector, Class, Object
+export @sel_str, Selector, Class, Object
 
 # Selectors
 
@@ -83,11 +83,6 @@ end
 
 mutable struct Object
   ptr::Ptr{Cvoid}
-
-  function Object(ptr::Ptr{Cvoid})
-    obj = new(ptr)
-    finalizer(release, obj)
-  end
 end
 
 unsafe_convert(::Type{Ptr{Cvoid}}, obj::Object) = obj.ptr

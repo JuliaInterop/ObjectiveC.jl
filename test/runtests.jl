@@ -3,11 +3,15 @@ using Test
 
 using ObjectiveC
 
-# smoke test
-str = @objc [NSString new]
-@test str isa Object
-
 @testset "foundation" begin
+
+using .Foundation
+
+# smoke test
+let str = @objc [NSString new]
+    @test str isa Object
+    release(str)
+end
 
 @test hostname() == gethostname()
 

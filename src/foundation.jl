@@ -1,4 +1,8 @@
-export YES, NO, nil, hostname
+module Foundation
+
+using ..ObjectiveC
+
+export YES, NO, nil, retain, release, hostname
 
 for c in :[NSObject
            NSBundle
@@ -15,10 +19,12 @@ const nil = C_NULL
 
 toobject(s::String) = @objc [[NSString alloc] initWithUTF8String:s]
 
+release(obj) = @objc [obj release]
+
+retain(obj) = @objc [obj retain]
+
 hostname() =
   unsafe_string(@objc [[[NSHost currentHost] localizedName] UTF8String])
-
-release(obj) = @objc [obj release]
 
 function loadbundle(path)
   bundle = @objc [NSBundle bundleWithPath:path]
@@ -29,3 +35,5 @@ function loadbundle(path)
 end
 
 framework(name) = loadbundle("/System/Library/Frameworks/$name.framework")
+
+end

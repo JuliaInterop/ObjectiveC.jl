@@ -1,3 +1,5 @@
+export signature
+
 method(class::Class, sel::Selector) =
   ccall(:class_getInstanceMethod, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}),
         class, sel)
