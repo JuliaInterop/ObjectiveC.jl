@@ -2,8 +2,6 @@ module ObjectiveC
 
 using Lazy, MacroTools
 
-import Base: show, convert, unsafe_convert, supertype, methods
-
 # Types & Reflection
 int2bool(x::Integer) = x != 0
 include("primitives.jl")

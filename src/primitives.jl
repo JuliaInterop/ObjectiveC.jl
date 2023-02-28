@@ -11,7 +11,7 @@ struct Selector
   Selector(ptr::Ptr{Cvoid}) = new(ptr)
 end
 
-unsafe_convert(::Type{Ptr{Cvoid}}, sel::Selector) = sel.ptr
+Base.unsafe_convert(::Type{Ptr{Cvoid}}, sel::Selector) = sel.ptr
 
 function Selector(name)
   Selector(ccall(:sel_registerName, Ptr{Cvoid}, (Ptr{Cchar},),
@@ -24,7 +24,7 @@ end
 
 name(sel::Selector) = selname(sel.ptr)
 
-function show(io::IO, sel::Selector)
+function Base.show(io::IO, sel::Selector)
   print(io, "sel")
   show(io, string(name(sel)))
 end
@@ -36,7 +36,7 @@ struct Class
   Class(ptr::Ptr{Cvoid}) = new(ptr)
 end
 
-unsafe_convert(::Type{Ptr{Cvoid}}, class::Class) = class.ptr
+Base.unsafe_convert(::Type{Ptr{Cvoid}}, class::Class) = class.ptr
 
 classptr(name) = ccall(:objc_getClass, Ptr{Cvoid}, (Ptr{Cchar},),
                        pointer(string(name)))
@@ -57,19 +57,19 @@ ismeta(class::Class) =
   ccall(:class_isMetaClass, Cint, (Ptr{Cvoid},),
         class) |> int2bool
 
-function supertype(class::Class)
+function Base.supertype(class::Class)
   ptr = ccall(:class_getSuperclass, Ptr{Cvoid}, (Ptr{Cvoid},),
               class.ptr)
   ptr == C_NULL && return nothing
   Class(ptr)
 end
 
-function show(io::IO, class::Class)
+function Base.show(io::IO, class::Class)
   ismeta(class) && print(io, "^")
   print(io, name(class))
 end
 
-function methods(class::Class)
+function Base.methods(class::Class)
   count = Cuint[0]
   meths = ccall(:class_copyMethodList, Ptr{Ptr{Cvoid}}, (Ptr{Cvoid}, Ptr{Cuint}),
                 class, count)
@@ -85,12 +85,12 @@ mutable struct Object
   ptr::Ptr{Cvoid}
 end
 
-unsafe_convert(::Type{Ptr{Cvoid}}, obj::Object) = obj.ptr
+Base.unsafe_convert(::Type{Ptr{Cvoid}}, obj::Object) = obj.ptr
 
 class(obj) =
   ccall(:object_getClass, Ptr{Cvoid}, (Ptr{Cvoid},),
         obj) |> Class
 
-methods(obj::Object) = methods(class(obj))
+Base.methods(obj::Object) = methods(class(obj))
 
-show(io::IO, obj::Object) = print(io, class(obj), " Object")
+Base.show(io::IO, obj::Object) = print(io, class(obj), " Object")
