@@ -16,7 +16,7 @@ const nil = C_NULL
 toobject(s::String) = @objc [[NSString alloc] initWithUTF8String:s]
 
 hostname() =
-  @objc [[[NSHost currentHost] localizedName] UTF8String] |> unsafe_string
+  unsafe_string(@objc [[[NSHost currentHost] localizedName] UTF8String])
 
 release(obj) = @objc [obj release]
 
