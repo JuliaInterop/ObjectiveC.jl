@@ -50,37 +50,6 @@ You can leave out the type to default to `Object`. So long as you don't change
 the type of the method, you're able to redefine it on the fly – even if you've
 already created instances of the class and used them as delegates.
 
-## using Cocoa
-
-The library provides some basic wrappers for the Cocoa framework for creating
-GUIs. Despite having generally nice APIs Objective-C is ridiculously verbose, so
-it's handy to have Julia wrappers for most functionality.
-
-```julia
-using ObjectiveC, Cocoa
-Cocoa.init()
-win = window()
-```
-
-This will pop up a window with the title "Julia". Now let's try something more
-interesting:
-
-```julia
-for α = linspace(0,π,50)
-  @objc [win setAlphaValue:cos(α)^2]
-  sleep(1/100)
-end
-```
-
-You should see the window fade in and out again.
-
-If you're using [Juno](http://junolab.org), I encourage you to try uncommenting
-[this line](https://github.com/one-more-minute/ObjectiveC.jl/blob/65f8605657a9a5c7bf5eab6cea89c6c431ff332d/src/cocoa/cocoa.jl#L48)
-and pressing `C-Enter` to evaluate the class definition (after opening a window
-as above). You'll notice that the class is actually redefined on-the-fly, and
-you'll hear a popping sound as the `tick` method is called (and you can do the
-reverse to stop the sound, of course).
-
 ## Current Limitations
 
   * Julia's FFI doesn't have great support for structs yet, so neither does
