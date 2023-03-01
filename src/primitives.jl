@@ -74,7 +74,7 @@ function Base.methods(class::Class)
   meths = ccall(:class_copyMethodList, Ptr{Ptr{Cvoid}}, (Ptr{Cvoid}, Ptr{Cuint}),
                 class, count)
   meths′ = [unsafe_load(meths, i) for i = 1:count[1]]
-  c_free(meths)
+  Libc.free(meths)
   meths = [ccall(:method_getName, Ptr{Cvoid}, (Ptr{Cvoid},), meth) for meth in meths′]
   return map(meth->selname(meth), meths)
 end

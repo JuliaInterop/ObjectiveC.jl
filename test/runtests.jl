@@ -13,6 +13,8 @@ let str = @objc [NSString new]
     release(str)
 end
 
+@test "UTF8String" in methods(NSString)
+
 @test hostname() == gethostname()
 
 end
