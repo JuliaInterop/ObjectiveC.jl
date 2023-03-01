@@ -1,10 +1,10 @@
-export @sel_str, Selector, Class, Object
+export @sel_str, Selector, Class, class, Object, id
+
 
 # Selectors
 
 selname(s::Ptr{Cvoid}) =
-  ccall(:sel_getName, Ptr{Cchar}, (Ptr{Cvoid},),
-        s) |> unsafe_string
+  ccall(:sel_getName, Ptr{Cchar}, (Ptr{Cvoid},), s) |> unsafe_string
 
 struct Selector
   ptr::Ptr{Cvoid}
@@ -14,8 +14,7 @@ end
 Base.unsafe_convert(::Type{Ptr{Cvoid}}, sel::Selector) = sel.ptr
 
 function Selector(name)
-  Selector(ccall(:sel_registerName, Ptr{Cvoid}, (Ptr{Cchar},),
-                 pointer(string(name))))
+  Selector(ccall(:sel_registerName, Ptr{Cvoid}, (Ptr{Cchar},), name))
 end
 
 macro sel_str(name)
@@ -29,6 +28,7 @@ function Base.show(io::IO, sel::Selector)
   show(io, string(name(sel)))
 end
 
+
 # Classes
 
 struct Class
@@ -38,8 +38,7 @@ end
 
 Base.unsafe_convert(::Type{Ptr{Cvoid}}, class::Class) = class.ptr
 
-classptr(name) = ccall(:objc_getClass, Ptr{Cvoid}, (Ptr{Cchar},),
-                       pointer(string(name)))
+classptr(name) = ccall(:objc_getClass, Ptr{Cvoid}, (Ptr{Cchar},), name)
 
 function Class(name)
   ptr = classptr(name)
@@ -79,18 +78,21 @@ function Base.methods(class::Class)
   return map(meth->selname(meth), meths)
 end
 
+
 # Objects
 
-mutable struct Object
-  ptr::Ptr{Cvoid}
-end
+# Object is an abstract type, so that we can define subtypes with constructors.
+# The expected interface is that any subtype of Object should be convertible to id.
 
-Base.unsafe_convert(::Type{Ptr{Cvoid}}, obj::Object) = obj.ptr
+abstract type OpaqueObject end
+const id = Ptr{OpaqueObject}
 
-class(obj) =
-  ccall(:object_getClass, Ptr{Cvoid}, (Ptr{Cvoid},),
-        obj) |> Class
+abstract type Object end
+# interface: object of a subtype of Object should be convertible to id
 
-Base.methods(obj::Object) = methods(class(obj))
+class(obj::Union{Object,id}) =
+  ccall(:object_getClass, Ptr{Cvoid}, (id,), obj) |> Class
 
-Base.show(io::IO, obj::Object) = print(io, "Object{", class(obj), "}")
+Base.methods(obj::Union{Object,id}) = methods(class(obj))
+
+Base.show(io::IO, obj::T) where {T <: Object} = print(io, "$T (object of type ", class(obj), ")")

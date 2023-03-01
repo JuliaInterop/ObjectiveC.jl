@@ -2,38 +2,37 @@ module Foundation
 
 using ..ObjectiveC
 
-export YES, NO, nil, retain, release, hostname
-
-for c in :[NSObject
-           NSBundle
-           NSString
-           NSArray
-           NSHost].args
-  @eval $(Expr(:export, c))
-  @eval const $c = Class($(Expr(:quote, c)))
-end
+export YES, NO, nil
 
 const YES = true
 const NO  = false
 const nil = C_NULL
 
-toobject(s::String) = @objc [[NSString alloc] initWithUTF8String:s]
 
-release(obj) = @objc [obj release]
+export NSUInteger
 
-retain(obj) = @objc [obj retain]
+const NSUInteger = Culong
+
+
+export NSString
+
+struct NSString <: Object
+    ptr::id
+end
+Base.unsafe_convert(::Type{id}, str::NSString) = str.ptr
+
+NSString() = NSString(@objc [NSString string]::id)
+NSString(data::String) = NSString(@objc [NSString stringWithUTF8String :data::Ptr{UInt8}]::id)
+Base.length(s::NSString) = Int(@objc [s::id length]::NSUInteger)
+
+export NSHost, hostname
+
+struct NSHost <: Object
+    ptr::id
+end
+Base.unsafe_convert(::Type{id}, host::NSHost) = host.ptr
 
 hostname() =
-  unsafe_string(@objc [[[NSHost currentHost] localizedName] UTF8String])
-
-function loadbundle(path)
-  bundle = @objc [NSBundle bundleWithPath:path]
-  bundle.ptr |> Int |> int2bool || error("Bundle $path not found")
-  loadedStuff = @objc [bundle load]
-  loadedStuff |> int2bool || error("Couldn't load bundle $path")
-  return
-end
-
-framework(name) = loadbundle("/System/Library/Frameworks/$name.framework")
+  unsafe_string(@objc [[[NSHost currentHost]::id localizedName]::id UTF8String]::Ptr{UInt8})
 
 end

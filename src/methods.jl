@@ -57,7 +57,7 @@ function nexttype(io::IO)
 end
 
 function parseencoding(io::IO)
-  types = c()
+  types = DataType[]
   while !eof(io)
     t = nexttype(io)
     t == nothing || push!(types, t)

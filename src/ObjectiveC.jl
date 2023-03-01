@@ -8,11 +8,11 @@ include("primitives.jl")
 include("methods.jl")
 
 # Calling Machinery
-include("call.jl")
 include("syntax.jl")
 
-# Class Creation
+# High-level functionality
 include("classes.jl")
+include("memory.jl")
 
 # API wrappers
 include("foundation.jl")

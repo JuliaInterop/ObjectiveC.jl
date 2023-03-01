@@ -1,45 +1,82 @@
 export @objc, @classes
 
-callerror() = error("ObjectiveC call: use [obj method] or [obj method:param ...]")
+callerror() = error("ObjectiveC call: use [obj method]::typ or [obj method :param::typ ...]::typ")
 
-function flatvcat(ex::Expr)
-  any(ex->isexpr(ex, :row), ex.args) || return ex
-  flat = Expr(:hcat)
-  for row in ex.args
-    isexpr(row, :row) ?
-      push!(flat.args, row.args...) :
-      push!(flat.args, row)
-  end
-  return calltransform(flat)
+function objcm(ex)
+    # handle a single call, [dst method: param::typ]::typ
+
+    # parse the call return type
+    Meta.isexpr(ex, :(::)) || callerror()
+    call, rettyp = ex.args
+
+    # parse the call
+    Meta.isexpr(call, :hcat) || callerror()
+    obj, method, args... = call.args
+
+    # the method should be a simple symbol. the resulting selector name includes : for args
+    method isa Symbol || callerror()
+    sel = String(method) * ":"^(length(args))
+
+    # deconstruct the arguments, which should all be typed expressions
+    argtyps, argvals = [], []
+    for arg in args
+        Meta.isexpr(arg, :(::)) || callerror()
+        val, typ = arg.args
+        if val isa QuoteNode
+            # this comes from a prepended symbol indicating another arg
+            val = val.value
+        end
+        push!(argvals, val)
+        push!(argtyps, typ)
+    end
+
+    # the object should be a class (single symbol) or an instance (var + typeassert)
+    ex = if obj isa Symbol
+        # class
+        class_message(obj, sel, rettyp, argtyps, argvals)
+    elseif Meta.isexpr(obj, :(::))
+        # instance
+        val, typ = obj.args
+        if val isa Expr
+            # possibly dealing with a nested expression, so recurse
+            quote
+                obj = $(objcm(obj))
+                $(instance_message(:obj, sel, rettyp, argtyps, argvals))
+            end
+        else
+            instance_message(esc(val), sel, rettyp, argtyps, argvals)
+        end
+        # XXX: do something with the instance type?
+    else
+        callerror()
+    end
+
+    return ex
 end
 
-function calltransform(ex::Expr)
-  obj = objcm(ex.args[1])
-  args = ex.args[2:end]
-  isempty(args) && callerror()
-
-  if isexpr(args[1], Symbol)
-    length(args) > 1 && callerror()
-    return :($message($obj, $(Selector(args[1]))))
-  end
-
-  all(arg->iscall(arg, :(:)) && isexpr(arg.args[1], Symbol), args) || callerror()
-  msg = join(vcat([arg.args[2] for arg in args], ""), ":") |> Selector
-  args = [objcm(arg.args[3]) for arg in args]
-  :($message($obj, $msg, $(args...)))
+function class_message(class_name, msg, rettyp, argtyps, argvals)
+    quote
+        class = Class($(String(class_name)))
+        sel = Selector($(String(msg)))
+        ccall(:objc_msgSend, $(esc(rettyp)),
+              (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+              class, sel, $(map(esc, argvals)...))
+    end
 end
 
-objcm(ex::Expr) =
-  isexpr(ex, :hcat) ? calltransform(ex) :
-  isexpr(ex, :vcat) ? flatvcat(ex) :
-  isexpr(ex, :block, :let) ? Expr(:block, map(objcm, ex.args)...) :
-  ex
-
-objcm(ex) = ex
+function instance_message(instance, msg, rettyp, argtyps, argvals)
+    quote
+        sel = Selector($(String(msg)))
+        ccall(:objc_msgSend, $(esc(rettyp)),
+              (id, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+              $instance, sel, $(map(esc, argvals)...))
+    end
+end
 
 macro objc(ex)
-  esc(objcm(ex))
+  objcm(ex)
 end
+
 
 # Import Classes
 

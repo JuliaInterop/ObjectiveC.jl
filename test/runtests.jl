@@ -3,22 +3,29 @@ using Test
 
 using ObjectiveC
 
+# smoke test
+let data = "test"
+    ptr = @objc [NSString stringWithUTF8String :data::Ptr{UInt8}]::id
+    @test ptr isa id
+    @test class(ptr) isa Class
+    @test "length" in methods(ptr)
+    @test 4 == @objc [ptr::id length]::Culong
+end
+
 @testset "foundation" begin
 
 using .Foundation
 
-# smoke test
-let str = @objc [NSString new]
-    @test str isa Object
-    release(str)
+@testset "NSString" begin
+    str = NSString()
+    @test length(str) == 0
+
+    str = NSString("test")
+    @test length(str) == 4
 end
 
-@test "UTF8String" in methods(NSString)
-
-let obj = @objc [NSHost currentHost]
-    @test contains(sprint(show, obj), "NSHost")
+@testset "NSHost" begin
+    @test hostname() == gethostname()
 end
-
-@test hostname() == gethostname()
 
 end
