@@ -15,6 +15,10 @@ end
 
 @test "UTF8String" in methods(NSString)
 
+let obj = @objc [NSHost currentHost]
+    @test contains(sprint(show, obj), "NSHost")
+end
+
 @test hostname() == gethostname()
 
 end

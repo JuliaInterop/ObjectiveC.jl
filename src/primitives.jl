@@ -93,4 +93,4 @@ class(obj) =
 
 Base.methods(obj::Object) = methods(class(obj))
 
-Base.show(io::IO, obj::Object) = print(io, class(obj), " Object")
+Base.show(io::IO, obj::Object) = print(io, "Object{", class(obj), "}")
