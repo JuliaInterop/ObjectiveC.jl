@@ -2,6 +2,18 @@ export @objc, @classes
 
 callerror() = error("ObjectiveC call: use [obj method]::typ or [obj method :param::typ ...]::typ")
 
+# convert a vcat to a hcat so that we can split the @objc expressions into multiple lines
+function flatvcat(ex::Expr)
+  any(ex->isexpr(ex, :row), ex.args) || return ex
+  flat = Expr(:hcat)
+  for row in ex.args
+    isexpr(row, :row) ?
+      push!(flat.args, row.args...) :
+      push!(flat.args, row)
+  end
+  return flat
+end
+
 function objcm(ex)
     # handle a single call, [dst method: param::typ]::typ
 
@@ -15,6 +27,9 @@ function objcm(ex)
     end
 
     # parse the call
+    if Meta.isexpr(call, :vcat)
+      call = flatvcat(call)
+    end
     Meta.isexpr(call, :hcat) || return esc(call)
     obj, method, args... = call.args
 
