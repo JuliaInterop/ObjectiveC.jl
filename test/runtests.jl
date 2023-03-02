@@ -22,9 +22,11 @@ using .Foundation
 @testset "NSString" begin
     str = NSString()
     @test length(str) == 0
+    @test String(str) == ""
 
     str = NSString("test")
     @test length(str) == 4
+    @test String(str) == "test"
 end
 
 @testset "NSHost" begin
