@@ -38,7 +38,7 @@ Base.unsafe_convert(::Type{id}, str::NSString) = str.ptr
 Base.cconvert(::Type{id}, str::String) = NSString(str)
 
 NSString() = NSString(@objc [NSString string]::id{NSString})
-NSString(data::String) = NSString(@objc [NSString stringWithUTF8String :data::Ptr{Cchar}]::id{NSString})
+NSString(data::String) = NSString(@objc [NSString stringWithUTF8String:data::Ptr{Cchar}]::id{NSString})
 Base.length(s::NSString) = Int(@objc [s::id{NSString} length]::NSUInteger)
 String(s::NSString) = unsafe_string(@objc [s::id{NSString} UTF8String]::Ptr{Cchar})
 Base.show(io::IO, ::MIME"text/plain", s::NSString) = print(io, "NSString(", repr(String(s)), ")")
@@ -64,7 +64,7 @@ end
 Base.unsafe_convert(::Type{id}, bundle::NSBundle) = bundle.ptr
 
 function NSBundle(path::Union{String,NSString})
-  ptr = @objc [NSBundle bundleWithPath :path::id{NSString}]::id{NSBundle}
+  ptr = @objc [NSBundle bundleWithPath:path::id{NSString}]::id{NSBundle}
   ptr == nil && error("Couldn't find bundle '$path'")
   NSBundle(ptr)
 end

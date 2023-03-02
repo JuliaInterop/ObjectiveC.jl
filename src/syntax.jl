@@ -33,9 +33,9 @@ function objcm(ex)
     Meta.isexpr(call, :hcat) || return esc(call)
     obj, method, args... = call.args
 
-    # deconstruct the arguments, which should all be typed expressions
+    # argument should be typed expressions
     argnames, argvals, argtyps = [], [], []
-    for arg in args
+    function parse_argument(arg; named=true)
         # name before the parameter (name:value::type) is optional
         if Meta.isexpr(arg, :call) && arg.args[1] == :(:)
           # form: name:value::typ
@@ -61,6 +61,25 @@ function objcm(ex)
         end
         push!(argvals, val)
         push!(argtyps, typ)
+    end
+
+    # the method may be a plain symbol, or already contain the first arg
+    if method isa Symbol
+        argnames, argvals, argtyps = [], [], []
+    elseif Meta.isexpr(method, :call) && method.args[1] == :(:)
+        _, method, arg = method.args
+        isa(method, Symbol) || callerror()
+        parse_argument(arg)
+    else
+        callerror()
+    end
+
+    # deconstruct the remaining arguments
+    for arg in args
+        # first arg should always be part of the method
+        isempty(argnames) && callerror()
+
+        parse_argument(arg)
     end
 
     # the method should be a simple symbol. the resulting selector includes : for args

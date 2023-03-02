@@ -3,16 +3,29 @@ using Test
 
 using ObjectiveC
 
-# basic @objc test
+@testset "@objc" begin
+    # class methods
+    @objc [NSString new]::id
+    data = "test"
+    @objc [NSString stringWithUTF8String:data::Ptr{UInt8}]::id
+    @objc [NSString stringWithUTF8String:"test"::Ptr{UInt8}]::id
+    obj = @objc [NSString stringWithUTF8String:"test"::Ptr{UInt8}]::id{NSString}
+
+    # instance methods
+    @objc [obj::id length]::UInt
+    @objc [obj::id{NSString} length]::UInt
+    @test @objc [obj::id{NSString} isEqualTo:obj::id]::Bool
+    empty_str = @objc [NSString string]::id{NSString}
+    @objc [obj::id stringByReplacingOccurrencesOfString:empty_str::id withString:empty_str::id]::id
+end
+
+# smoke test
 let data = "test"
-    ptr = @objc [NSString stringWithUTF8String :data::Ptr{UInt8}]::id
+    ptr = @objc [NSString stringWithUTF8String:data::Ptr{UInt8}]::id
     @test ptr isa id
     @test class(ptr) isa Class
     @test "length" in methods(ptr)
     @test 4 == @objc [ptr::id length]::Culong
-
-    # id pointers should be allowed to carry type info
-    @objc [NSString stringWithUTF8String :data::Ptr{UInt8}]::id{NSString}
 end
 
 @testset "foundation" begin
