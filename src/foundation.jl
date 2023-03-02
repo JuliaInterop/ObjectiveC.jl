@@ -78,4 +78,26 @@ end
 
 load_framework(name) = load(NSBundle("/System/Library/Frameworks/$name.framework"))
 
+
+export NSArray
+
+struct NSArray <: NSObject
+    ptr::id
+end
+Base.unsafe_convert(::Type{id}, arr::NSArray) = arr.ptr
+
+function NSArray(elements::Vector)
+    arr = @objc [NSArray arrayWithObjects:elements::Ptr{id}
+                                    count:length(elements)::NSUInteger]::id{NSArray}
+    return NSArray(arr)
+end
+
+Base.length(arr::NSArray) = Int(@objc [arr::id{NSArray} count]::NSUInteger)
+function Base.getindex(arr::NSArray, i::Int)
+  @boundscheck 1 <= i <= length(arr) || throw(BoundsError(arr, i))
+  @objc [arr::id{NSArray} objectAtIndex:(i-1)::NSUInteger]::id
+end
+
+Base.iterate(arr::NSArray, i::Int=1) = i > length(arr) ? nothing : (arr[i], i+1)
+
 end

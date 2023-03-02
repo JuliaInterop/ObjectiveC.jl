@@ -59,4 +59,13 @@ end
     @test_throws ErrorException load_framework("NonExistingFramework")
 end
 
+@testset "NSArray" begin
+    str1 = NSString("Hello")
+    str2 = NSString("World")
+    arr = NSArray([str1, str2])
+    @test length(arr) == 2
+    @test NSString(arr[1]) == "Hello"
+    @test NSString(arr[2]) == "World"
+end
+
 end
