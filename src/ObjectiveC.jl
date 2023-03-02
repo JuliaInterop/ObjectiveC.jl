@@ -12,7 +12,6 @@ include("syntax.jl")
 
 # High-level functionality
 include("classes.jl")
-include("memory.jl")
 
 # API wrappers
 include("foundation.jl")

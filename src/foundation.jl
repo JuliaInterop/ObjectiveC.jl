@@ -8,7 +8,7 @@ const YES = true
 const NO  = false
 const nil = C_NULL
 
-export NSObject
+export NSObject, retain, release
 
 abstract type NSObject <: Object end
 
@@ -17,6 +17,10 @@ description(obj::NSObject) = NSString(@objc [obj::id{NSObject} description]::id{
 function Base.show(io::IO, ::MIME"text/plain", obj::NSObject)
   print(io, String(description(obj)))
 end
+
+release(obj::NSObject) = @objc [obj::id{NSObject} release]::Cvoid
+
+retain(obj::NSObject) = @objc [obj::id{NSObject} retain]::Cvoid
 
 
 export NSUInteger
