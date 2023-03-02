@@ -39,4 +39,9 @@ end
     @test hostname() == gethostname()
 end
 
+@testset "NSBundle" begin
+    load_framework("IOKit")
+    @test_throws ErrorException load_framework("NonExistingFramework")
+end
+
 end
