@@ -52,10 +52,8 @@ end
 Base.unsafe_convert(::Type{id}, host::NSHost) = host.ptr
 
 current_host() = NSHost(@objc [NSHost currentHost]::id{NSHost})
-function hostname()
-  host = current_host()
-  unsafe_string(@objc [[host::id{NSHost} localizedName]::id{NSString} UTF8String]::Ptr{UInt8})
-end
+hostname() =
+  unsafe_string(@objc [[current_host()::id{NSHost} localizedName]::id{NSString} UTF8String]::Ptr{UInt8})
 
 
 export NSBundle, load_framework

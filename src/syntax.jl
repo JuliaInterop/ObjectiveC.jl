@@ -15,20 +15,28 @@ function objcm(ex)
     end
 
     # parse the call
-    Meta.isexpr(call, :hcat) || callerror()
+    Meta.isexpr(call, :hcat) || return esc(call)
     obj, method, args... = call.args
 
-    # the method should be a simple symbol. the resulting selector name includes : for args
-    method isa Symbol || callerror()
-    sel = String(method) * ":"^(length(args))
-
     # deconstruct the arguments, which should all be typed expressions
-    argtyps, argvals = [], []
+    argnames, argvals, argtyps = [], [], []
     for arg in args
+        # name before the parameter (name:value::type) is optional
+        if Meta.isexpr(arg, :call) && arg.args[1] == :(:)
+          # form: name:value::typ
+          name = String(arg.args[2])
+          arg = arg.args[3]
+        else
+          name = nothing
+        end
+        push!(argnames, name)
+
         Meta.isexpr(arg, :(::)) || callerror()
         val, typ = arg.args
         if val isa QuoteNode
-            # this comes from a prepended symbol indicating another arg
+            # nameless params are parsed as a symbol
+            # (there's an edge case when using e.g. `:length(x)::typ`, causing the `length`
+            #  to be parsed as a symbol, but you should just use a param name in that case)
             val = val.value
         end
         if Meta.isexpr(typ, :curly) && typ.args[1] == :id
@@ -39,6 +47,10 @@ function objcm(ex)
         push!(argvals, val)
         push!(argtyps, typ)
     end
+
+    # the method should be a simple symbol. the resulting selector includes : for args
+    method isa Symbol || callerror()
+    sel = String(method) * join(map(name->something(name,"")*":", argnames))
 
     # the object should be a class (single symbol) or an instance (var + typeassert)
     ex = if obj isa Symbol
