@@ -21,9 +21,9 @@ struct NSString <: Object
 end
 Base.unsafe_convert(::Type{id}, str::NSString) = str.ptr
 
-NSString() = NSString(@objc [NSString string]::id)
-NSString(data::String) = NSString(@objc [NSString stringWithUTF8String :data::Ptr{UInt8}]::id)
-Base.length(s::NSString) = Int(@objc [s::id length]::NSUInteger)
+NSString() = @objc [NSString string]::NSString
+NSString(data::String) = @objc [NSString stringWithUTF8String :data::Ptr{UInt8}]::NSString
+Base.length(s::NSString) = Int(@objc [s::NSString length]::NSUInteger)
 
 export NSHost, hostname
 
@@ -33,6 +33,6 @@ end
 Base.unsafe_convert(::Type{id}, host::NSHost) = host.ptr
 
 hostname() =
-  unsafe_string(@objc [[[NSHost currentHost]::id localizedName]::id UTF8String]::Ptr{UInt8})
+  unsafe_string(@objc [[[NSHost currentHost]::NSHost localizedName]::NSString UTF8String]::Ptr{UInt8})
 
 end
