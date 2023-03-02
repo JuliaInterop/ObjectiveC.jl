@@ -8,6 +8,16 @@ const YES = true
 const NO  = false
 const nil = C_NULL
 
+export NSObject
+
+abstract type NSObject <: Object end
+
+description(obj::NSObject) = NSString(@objc [obj::id{NSObject} description]::id{NSString})
+
+function Base.show(io::IO, ::MIME"text/plain", obj::NSObject)
+  print(io, String(description(obj)))
+end
+
 
 export NSUInteger
 
@@ -16,7 +26,7 @@ const NSUInteger = Culong
 
 export NSString
 
-struct NSString <: Object
+struct NSString <: NSObject
     ptr::id
 end
 Base.unsafe_convert(::Type{id}, str::NSString) = str.ptr
@@ -27,21 +37,26 @@ NSString() = NSString(@objc [NSString string]::id{NSString})
 NSString(data::String) = NSString(@objc [NSString stringWithUTF8String :data::Ptr{Cchar}]::id{NSString})
 Base.length(s::NSString) = Int(@objc [s::id{NSString} length]::NSUInteger)
 String(s::NSString) = unsafe_string(@objc [s::id{NSString} UTF8String]::Ptr{Cchar})
+Base.show(io::IO, ::MIME"text/plain", s::NSString) = print(io, "NSString(", repr(String(s)), ")")
+Base.show(io::IO, s::NSString) = show(io, String(s))
 
-export NSHost, hostname
+export NSHost, current_host, hostname
 
-struct NSHost <: Object
+struct NSHost <: NSObject
     ptr::id
 end
 Base.unsafe_convert(::Type{id}, host::NSHost) = host.ptr
 
-hostname() =
-  unsafe_string(@objc [[[NSHost currentHost]::id{NSHost} localizedName]::id{NSString} UTF8String]::Ptr{UInt8})
+current_host() = NSHost(@objc [NSHost currentHost]::id{NSHost})
+function hostname()
+  host = current_host()
+  unsafe_string(@objc [[host::id{NSHost} localizedName]::id{NSString} UTF8String]::Ptr{UInt8})
+end
 
 
 export NSBundle, load_framework
 
-struct NSBundle <: Object
+struct NSBundle <: NSObject
     ptr::id
 end
 Base.unsafe_convert(::Type{id}, bundle::NSBundle) = bundle.ptr
