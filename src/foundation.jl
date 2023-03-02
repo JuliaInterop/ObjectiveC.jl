@@ -36,6 +36,8 @@ end
 Base.unsafe_convert(::Type{id}, str::NSString) = str.ptr
 
 Base.cconvert(::Type{id}, str::String) = NSString(str)
+Base.:(==)(s1::Union{String,NSString}, s2::Union{String,NSString}) = String(s1) == String(s2)
+Base.:(==)(s1::NSString, s2::NSString) = @objc [s1::id{NSString} isEqualToString:s2::id{NSString}]::Bool
 
 NSString() = NSString(@objc [NSString string]::id{NSString})
 NSString(data::String) = NSString(@objc [NSString stringWithUTF8String:data::Ptr{Cchar}]::id{NSString})

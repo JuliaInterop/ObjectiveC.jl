@@ -40,6 +40,14 @@ using .Foundation
     str = NSString("test")
     @test length(str) == 4
     @test String(str) == "test"
+
+    @test NSString() == NSString()
+    @test "" == NSString()
+    @test NSString() == ""
+
+    @test NSString("foo") != NSString("bar")
+    @test "foo" != NSString("bar")
+    @test NSString("foo") != "bar"
 end
 
 @testset "NSHost" begin
