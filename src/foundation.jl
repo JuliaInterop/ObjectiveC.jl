@@ -23,9 +23,9 @@ Base.unsafe_convert(::Type{id}, str::NSString) = str.ptr
 
 Base.cconvert(::Type{id}, str::String) = NSString(str)
 
-NSString() = @objc [NSString string]::NSString
-NSString(data::String) = @objc [NSString stringWithUTF8String :data::Ptr{UInt8}]::NSString
-Base.length(s::NSString) = Int(@objc [s::NSString length]::NSUInteger)
+NSString() = NSString(@objc [NSString string]::id{NSString})
+NSString(data::String) = NSString(@objc [NSString stringWithUTF8String :data::Ptr{UInt8}]::id{NSString})
+Base.length(s::NSString) = Int(@objc [s::id{NSString} length]::NSUInteger)
 
 export NSHost, hostname
 
@@ -35,24 +35,24 @@ end
 Base.unsafe_convert(::Type{id}, host::NSHost) = host.ptr
 
 hostname() =
-  unsafe_string(@objc [[[NSHost currentHost]::NSHost localizedName]::NSString UTF8String]::Ptr{UInt8})
+  unsafe_string(@objc [[[NSHost currentHost]::id{NSHost} localizedName]::id{NSString} UTF8String]::Ptr{UInt8})
 
 
 export NSBundle, load_framework
 
 struct NSBundle <: Object
     ptr::id
-    function NSBundle(ptr::id)
-      id == nil && error("Couldn't find bundle")
-      new(ptr)
-    end
 end
 Base.unsafe_convert(::Type{id}, bundle::NSBundle) = bundle.ptr
 
-NSBundle(path::Union{String,NSString}) = @objc [NSBundle bundleWithPath :path::NSString]::NSBundle
+function NSBundle(path::Union{String,NSString})
+  ptr = @objc [NSBundle bundleWithPath :path::id{NSString}]::id{NSBundle}
+  ptr == nil && error("Couldn't find bundle '$path'")
+  NSBundle(ptr)
+end
 
 function load(bundle::NSBundle)
-  loaded = @objc [bundle::NSBundle load]::Bool
+  loaded = @objc [bundle::id{NSBundle} load]::Bool
   loaded || error("Couldn't load bundle")
 end
 

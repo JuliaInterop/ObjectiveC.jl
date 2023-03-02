@@ -88,8 +88,8 @@ abstract type OpaqueObject end
 const id = Ptr{OpaqueObject}
 
 abstract type Object end
-# interface: subtypes of Object should be constructible from and convertible to `id`s
-#            (i.e., requiring `MyObj(::id)` and `Base.unsafe_convert(::Type{id}, ::MyObj)`)
+# interface: subtypes of Object should be convertible to `id`s
+#            (i.e., `Base.unsafe_convert(::Type{id}, ::MyObj)`)
 
 class(obj::Union{Object,id}) =
   ccall(:object_getClass, Ptr{Cvoid}, (id,), obj) |> Class

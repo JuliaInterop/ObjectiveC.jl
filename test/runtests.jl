@@ -10,17 +10,9 @@ let data = "test"
     @test class(ptr) isa Class
     @test "length" in methods(ptr)
     @test 4 == @objc [ptr::id length]::Culong
-end
 
-# test re-wrapping of Objective-C objects (which are passed by-reference)
-struct TestNSString <: Object
-    canary::Int
-    ptr::id
-    TestNSString(ptr::id) = new(42, ptr)
-end
-let str = @objc [NSString string]::TestNSString
-    @assert str isa TestNSString
-    @assert str.canary == 42
+    # id pointers should be allowed to carry type info
+    @objc [NSString stringWithUTF8String :data::Ptr{UInt8}]::id{NSString}
 end
 
 @testset "foundation" begin
