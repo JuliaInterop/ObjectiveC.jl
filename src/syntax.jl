@@ -1,6 +1,7 @@
 export @objc, @objcwrapper
 
-callerror() = error("ObjectiveC call: use [obj method]::typ or [obj method :param::typ ...]::typ")
+callerror(msg) = error("""ObjectiveC call: $msg
+                          Use [obj method]::typ or [obj method :param::typ ...]::typ""")
 
 # convert a vcat to a hcat so that we can split the @objc expressions into multiple lines
 function flatvcat(ex::Expr)
@@ -18,7 +19,7 @@ function objcm(ex)
     # handle a single call, [dst method: param::typ]::typ
 
     # parse the call return type
-    Meta.isexpr(ex, :(::)) || callerror()
+    Meta.isexpr(ex, :(::)) || callerror("missing return type")
     call, rettyp = ex.args
     if Meta.isexpr(rettyp, :curly) && rettyp.args[1] == :id
         # we're returning an object pointer, with additional type info.
@@ -46,7 +47,7 @@ function objcm(ex)
         end
         push!(argnames, name)
 
-        Meta.isexpr(arg, :(::)) || callerror()
+        Meta.isexpr(arg, :(::)) || callerror("missing argument type")
         val, typ = arg.args
         if val isa QuoteNode
             # nameless params are parsed as a symbol
@@ -68,22 +69,21 @@ function objcm(ex)
         argnames, argvals, argtyps = [], [], []
     elseif Meta.isexpr(method, :call) && method.args[1] == :(:)
         _, method, arg = method.args
-        isa(method, Symbol) || callerror()
+        isa(method, Symbol) || callerror("method name must be a literal symbol")
         parse_argument(arg)
     else
-        callerror()
+        callerror("method name must be a literal")
     end
 
     # deconstruct the remaining arguments
     for arg in args
         # first arg should always be part of the method
-        isempty(argnames) && callerror()
+        isempty(argnames) && callerror("first argument should be part of the method (i.e., don't use a space between the method and :param)")
 
         parse_argument(arg)
     end
 
-    # the method should be a simple symbol. the resulting selector includes : for args
-    method isa Symbol || callerror()
+    # with the method and all args known, we can determine the selector
     sel = String(method) * join(map(name->something(name,"")*":", argnames))
 
     # the object should be a class (single symbol) or an instance (var + typeassert)
@@ -104,7 +104,7 @@ function objcm(ex)
         end
         # XXX: do something with the instance type?
     else
-        callerror()
+        callerror("object must be a class or typed instance")
     end
 
     return ex
@@ -151,16 +151,16 @@ too, and are controlled by the optional keyword arguments:
 
   * `immutable`: if `true` (default), define the wrapper class as an immutable.
     Should be disabled when you want to use finalizers.
-  * `comparison`: if `true` (default), define `==` and `hash` methods for the wrapper
-    class. This is useful for using the wrapper class as a key in a dictionary.
-    Should be disabled when using  a custom comparison method.
+  * `comparison`: if `true` (default = `=false`), define `==` and `hash` methods for the
+    wrapper class. This should not be necessary when using an immutable struct, in which
+    case the default `==` and `hash` methods are sufficient.
 """
 macro objcwrapper(ex...)
   def = ex[end]
   kwargs = ex[1:end-1]
 
   # parse kwargs
-  comparison = true
+  comparison = false
   immutable = true
   for kw in kwargs
     if kw isa Expr && kw.head == :(=)

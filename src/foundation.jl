@@ -30,7 +30,7 @@ const NSUInteger = Culong
 
 export NSString
 
-@objcwrapper comparison=false NSString <: NSObject
+@objcwrapper NSString <: NSObject
 
 Base.cconvert(::Type{id}, str::String) = NSString(str)
 Base.:(==)(s1::Union{String,NSString}, s2::Union{String,NSString}) = String(s1) == String(s2)
