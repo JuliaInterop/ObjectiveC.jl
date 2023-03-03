@@ -2,14 +2,8 @@ module Foundation
 
 using ..ObjectiveC
 
-export YES, NO, nil
 
-const YES = true
-const NO  = false
-const nil = C_NULL
-
-
-export NSObject, retain, release
+export NSObject, retain, release, description
 
 abstract type NSObject <: Object end
 

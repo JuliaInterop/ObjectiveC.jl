@@ -1,4 +1,7 @@
-export @sel_str, Selector, Class, class, Object, id
+export YES, NO, @sel_str, Selector, Class, class, Object, id, nil
+
+const YES = true
+const NO  = false
 
 
 # Selectors
@@ -86,6 +89,8 @@ end
 
 abstract type OpaqueObject end
 const id = Ptr{OpaqueObject}
+
+const nil = id(C_NULL)
 
 abstract type Object end
 # interface: subtypes of Object should be convertible to `id`s
