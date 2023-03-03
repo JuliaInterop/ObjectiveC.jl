@@ -30,10 +30,7 @@ const NSUInteger = Culong
 
 export NSString
 
-struct NSString <: NSObject
-    ptr::id
-end
-Base.unsafe_convert(::Type{id}, str::NSString) = str.ptr
+@objcwrapper comparison=false NSString <: NSObject
 
 Base.cconvert(::Type{id}, str::String) = NSString(str)
 Base.:(==)(s1::Union{String,NSString}, s2::Union{String,NSString}) = String(s1) == String(s2)
@@ -48,10 +45,7 @@ Base.show(io::IO, s::NSString) = show(io, String(s))
 
 export NSHost, current_host, hostname
 
-struct NSHost <: NSObject
-    ptr::id
-end
-Base.unsafe_convert(::Type{id}, host::NSHost) = host.ptr
+@objcwrapper NSHost <: NSObject
 
 current_host() = NSHost(@objc [NSHost currentHost]::id{NSHost})
 hostname() =
@@ -60,10 +54,7 @@ hostname() =
 
 export NSBundle, load_framework
 
-struct NSBundle <: NSObject
-    ptr::id
-end
-Base.unsafe_convert(::Type{id}, bundle::NSBundle) = bundle.ptr
+@objcwrapper NSBundle <: NSObject
 
 function NSBundle(path::Union{String,NSString})
   ptr = @objc [NSBundle bundleWithPath:path::id{NSString}]::id{NSBundle}
@@ -81,10 +72,7 @@ load_framework(name) = load(NSBundle("/System/Library/Frameworks/$name.framework
 
 export NSArray
 
-struct NSArray <: NSObject
-    ptr::id
-end
-Base.unsafe_convert(::Type{id}, arr::NSArray) = arr.ptr
+@objcwrapper NSArray <: NSObject
 
 function NSArray(elements::Vector)
     arr = @objc [NSArray arrayWithObjects:elements::Ptr{id}

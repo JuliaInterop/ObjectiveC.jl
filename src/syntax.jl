@@ -1,4 +1,4 @@
-export @objc, @classes
+export @objc, @objcwrapper
 
 callerror() = error("ObjectiveC call: use [obj method]::typ or [obj method :param::typ ...]::typ")
 
@@ -134,10 +134,92 @@ macro objc(ex)
 end
 
 
-# Import Classes
+# Wrapper Classes
 
-macro classes(names)
-  isexpr(names, Symbol) ? (names = [names]) : (names = names.args)
-  Expr(:block, [:(const $(esc(name)) = Class($(Expr(:quote, name))))
-                for name in names]..., nothing)
+wrappererror(msg) = error("""ObjectiveC wrapper: $msg
+                             Use `@objcwrapper Class` or `Class <: SuperType`; see `?@objcwrapper` for more details.""")
+
+"""
+    @objcwrapper [kwargs] name [<: super]
+
+Helper macro to define a Julia class named `name` for wrapping Objective C pointers. The
+supertype of this class is `super`, which defaults to `Object`.
+
+The generated class is a simple wrapper around an `id` pointer, along with the required
+conversion methods that are expected by the `@objc` macro. Other methods can be generated
+too, and are controlled by the optional keyword arguments:
+
+  * `immutable`: if `true` (default), define the wrapper class as an immutable.
+    Should be disabled when you want to use finalizers.
+  * `comparison`: if `true` (default), define `==` and `hash` methods for the wrapper
+    class. This is useful for using the wrapper class as a key in a dictionary.
+    Should be disabled when using  a custom comparison method.
+"""
+macro objcwrapper(ex...)
+  def = ex[end]
+  kwargs = ex[1:end-1]
+
+  # parse kwargs
+  comparison = true
+  immutable = true
+  for kw in kwargs
+    if kw isa Expr && kw.head == :(=)
+      kw, val = kw.args
+      if kw == :comparison
+        val isa Bool || wrappererror("comparison keyword argument must be a literal boolean")
+        comparison = val
+      elseif kw == :immutable
+        val isa Bool || wrappererror("immutable keyword argument must be a literal boolean")
+        immutable = val
+      else
+        wrappererror("unrecognized keyword argument: $kw")
+      end
+    else
+      wrappererror("invalid keyword argument: $kw")
+    end
+  end
+
+  # parse class definition
+  if Meta.isexpr(def, :(<:))
+    name, super = def.args
+  elseif def isa Symbol
+    name = def
+    super = Object
+  else
+    wrappererror()
+  end
+
+  # generate class definition
+  ex = if immutable
+    quote
+      struct $name <: $super
+        ptr::id
+
+        # restrict the default constructor
+        $name(ptr::id) = new(ptr)
+      end
+    end
+  else
+    quote
+      mutable struct $name <: $super
+        ptr::id
+
+        # restrict the default constructor
+        $name(ptr::id) = new(ptr)
+      end
+    end
+  end
+  append!(ex.args, (quote
+    Base.unsafe_convert(::Type{id}, dev::$name) = dev.ptr
+  end).args)
+
+  # add optional methods
+  if comparison
+    append!(ex.args, (quote
+      Base.:(==)(a::$name, b::$name) = a.ptr == b.ptr
+      Base.hash(dev::$name, h::UInt) = hash(dev.ptr, h)
+    end).args)
+  end
+
+  esc(ex)
 end
