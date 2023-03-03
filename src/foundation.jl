@@ -8,6 +8,7 @@ const YES = true
 const NO  = false
 const nil = C_NULL
 
+
 export NSObject, retain, release
 
 abstract type NSObject <: Object end
@@ -23,9 +24,18 @@ release(obj::NSObject) = @objc [obj::id{NSObject} release]::Cvoid
 retain(obj::NSObject) = @objc [obj::id{NSObject} retain]::Cvoid
 
 
-export NSUInteger
+export NSInteger, MSIntegerMin, NSIntegerMax, NSUInteger, NSUIntegerMax
 
-const NSUInteger = Culong
+if sizeof(Ptr{Cvoid}) == 8
+  const NSInteger = Int64
+  const NSUInteger = UInt64
+else
+  const NSInteger = Int32
+  const NSUInteger = UInt32
+end
+const MSIntegerMin = typemin(NSInteger)
+const NSIntegerMax = typemax(NSInteger)
+const NSUIntegerMax = typemax(NSUInteger)
 
 
 export NSString
