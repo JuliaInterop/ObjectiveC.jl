@@ -20,12 +20,17 @@ using ObjectiveC
 end
 
 # smoke test
+@objcwrapper TestNSString <: Object
 let data = "test"
     ptr = @objc [NSString stringWithUTF8String:data::Ptr{UInt8}]::id
     @test ptr isa id
     @test class(ptr) isa Class
     @test "length" in methods(ptr)
     @test 4 == @objc [ptr::id length]::Culong
+
+    obj = TestNSString(ptr)
+    @test Base.unsafe_convert(id, obj) == ptr
+    @test_throws UndefRefError TestNSString(nil)
 end
 
 @testset "foundation" begin

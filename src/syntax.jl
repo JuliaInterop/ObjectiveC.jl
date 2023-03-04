@@ -195,8 +195,12 @@ macro objcwrapper(ex...)
       struct $name <: $super
         ptr::id
 
-        # restrict the default constructor
-        $name(ptr::id) = new(ptr)
+        # restrict the default constructor to object pointer types,
+        # and make sure we don't create nil objects
+        function $name(ptr::id)
+          ptr == nil && throw(UndefRefError())
+          new(ptr)
+        end
       end
     end
   else
@@ -204,8 +208,12 @@ macro objcwrapper(ex...)
       mutable struct $name <: $super
         ptr::id
 
-        # restrict the default constructor
-        $name(ptr::id) = new(ptr)
+        # restrict the default constructor to object pointer types,
+        # and make sure we don't create nil objects
+        function $name(ptr::id)
+          ptr == nil && throw(UndefRefError())
+          new(ptr)
+        end
       end
     end
   end
