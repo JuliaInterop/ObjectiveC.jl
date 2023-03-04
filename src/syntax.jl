@@ -142,16 +142,22 @@ wrappererror(msg) = error("""ObjectiveC wrapper: $msg
 """
     @objcwrapper [kwargs] name [<: super]
 
-Helper macro to define a Julia class named `name` for wrapping Objective C pointers. The
-supertype of this class is `super`, which defaults to `Object`.
+Helper macro to define a set of Julia classes for wrapping Objective-C pointers.
 
-The generated class is a simple wrapper around an `id` pointer, along with the required
-conversion methods that are expected by the `@objc` macro. Other methods can be generated
-too, and are controlled by the optional keyword arguments:
+Because Objective-C supports multilevel inheritance, we cannot directly translate its
+class model to Julia's. Instead, we define an abstract class `name` that implements the
+requested hierarchy (extending `super`, which defaults to `Object`), along with an instance
+class `$(name)Instance` that wraps an Objective-C pointer.
 
-  * `immutable`: if `true` (default), define the wrapper class as an immutable.
-    Should be disabled when you want to use finalizers.
-  * `comparison`: if `true` (default = `=false`), define `==` and `hash` methods for the
+The split into two classes should not be visible to the end user. Methods should only ever
+use the `name` class, both for dispatch purposes and when constructing objects.
+
+In addition to this boilerplate, `@objcwrapper`'s code generation can be customized through
+keyword arguments:
+
+  * `immutable`: if `true` (default), define the instance class as an immutable. Should be
+    disabled when you want to use finalizers.
+  * `comparison`: if `true` (default `false`), define `==` and `hash` methods for the
     wrapper class. This should not be necessary when using an immutable struct, in which
     case the default `==` and `hash` methods are sufficient.
 """
@@ -189,44 +195,50 @@ macro objcwrapper(ex...)
     wrappererror()
   end
 
-  # generate class definition
+  # generate type hierarchy
+  ex = quote
+    abstract type $name <: $super end
+  end
+
+  # generate the instance class
+  instance = Symbol(name, "Instance")
   ex = if immutable
     quote
-      struct $name <: $super
+      $(ex.args...)
+      struct $instance <: $name
         ptr::id
-
-        # restrict the default constructor to object pointer types,
-        # and make sure we don't create nil objects
-        function $name(ptr::id)
-          ptr == nil && throw(UndefRefError())
-          new(ptr)
-        end
       end
     end
   else
     quote
-      mutable struct $name <: $super
+      $(ex.args...)
+      mutable struct $instance <: $name
         ptr::id
-
-        # restrict the default constructor to object pointer types,
-        # and make sure we don't create nil objects
-        function $name(ptr::id)
-          ptr == nil && throw(UndefRefError())
-          new(ptr)
-        end
       end
     end
   end
-  append!(ex.args, (quote
-    Base.unsafe_convert(::Type{id}, dev::$name) = dev.ptr
-  end).args)
+
+  # add essential methods
+  ex = quote
+    $(ex.args...)
+
+    Base.unsafe_convert(::Type{id}, dev::$instance) = dev.ptr
+
+    # add a pseudo constructor to theh abstract type that also checks for nil pointers.
+    function $name(ptr::id)
+      ptr == nil && throw(UndefRefError())
+      $instance(ptr)
+    end
+  end
 
   # add optional methods
   if comparison
-    append!(ex.args, (quote
-      Base.:(==)(a::$name, b::$name) = a.ptr == b.ptr
-      Base.hash(dev::$name, h::UInt) = hash(dev.ptr, h)
-    end).args)
+    ex = quote
+      $(ex.args...)
+
+      Base.:(==)(a::$instance, b::$instance) = a.ptr == b.ptr
+      Base.hash(dev::$instance, h::UInt) = hash(dev.ptr, h)
+    end
   end
 
   esc(ex)
