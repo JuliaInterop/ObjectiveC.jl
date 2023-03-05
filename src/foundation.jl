@@ -92,4 +92,12 @@ end
 
 Base.iterate(arr::NSArray, i::Int=1) = i > length(arr) ? nothing : (arr[i], i+1)
 
+
+export NSRange
+
+struct NSRange
+    location::NSUInteger
+    length::NSUInteger
+end
+
 end
