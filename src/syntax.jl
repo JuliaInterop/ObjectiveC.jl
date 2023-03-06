@@ -159,8 +159,8 @@ macro objcwrapper(ex...)
   kwargs = ex[1:end-1]
 
   # parse kwargs
-  comparison = false
-  immutable = true
+  comparison = nothing
+  immutable = nothing
   for kw in kwargs
     if kw isa Expr && kw.head == :(=)
       kw, value = kw.args
@@ -177,6 +177,8 @@ macro objcwrapper(ex...)
       wrappererror("invalid keyword argument: $kw")
     end
   end
+  immutable = something(immutable, true)
+  comparison = something(comparison, !immutable)
 
   # parse class definition
   if Meta.isexpr(def, :(<:))
