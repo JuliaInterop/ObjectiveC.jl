@@ -126,6 +126,22 @@ end
     end
 end
 
+@testset "NSURL" begin
+    let url = NSURL("https://julialang.org/downloads/")
+        @test !url.isFileURL
+        @test url.scheme == "https"
+        @test url.host == "julialang.org"
+        @test url.path == "/downloads"
+    end
+
+    let file = NSFileURL("/foo/bar/baz.qux")
+        @test file.isFileURL
+        @test file.path == "/foo/bar/baz.qux"
+        @test file.lastPathComponent == "baz.qux"
+        @test file.pathComponents == NSString["/", "foo", "bar", "baz.qux"]
+    end
+end
+
 end
 
 @testset "dispatch" begin

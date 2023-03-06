@@ -124,7 +124,10 @@ export NSString
     @autoproperty UTF8String::Ptr{Cchar}
 end
 
+# allow conversions from String
 Base.cconvert(::Type{id{NSString}}, str::String) = NSString(str)
+Base.convert(::Type{NSString}, str::String) = NSString(str)
+
 Base.:(==)(s1::Union{String,NSString}, s2::Union{String,NSString}) = String(s1) == String(s2)
 Base.:(==)(s1::NSString, s2::NSString) = @objc [s1::id{NSString} isEqualToString:s2::id{NSString}]::Bool
 
@@ -296,5 +299,51 @@ function load(bundle::NSBundle)
 end
 
 load_framework(name) = load(NSBundle("/System/Library/Frameworks/$name.framework"))
+
+
+export NSURL, NSFileURL
+
+@objcwrapper NSURL <: NSObject
+
+@objcproperties NSURL begin
+  # Querying an NSURL
+  @autoproperty isFileURL::Bool
+  @autoproperty isFileReferenceURL::Bool
+
+  # Accessing the Parts of the URL
+  @autoproperty absoluteString::id{NSString}
+  @autoproperty absoluteURL::id{NSURL}
+  @autoproperty baseURL::id{NSURL}
+  @autoproperty fileSystemRepresentation::id{NSString}
+  @autoproperty fragment::id{NSString}
+  @autoproperty host::id{NSString}
+  @autoproperty lastPathComponent::id{NSString}
+  @autoproperty parameterString::id{NSString}
+  @autoproperty password::id{NSString}
+  @autoproperty path::id{NSString}
+  @autoproperty pathComponents::id{NSArray} type=Vector{NSString}
+  @autoproperty pathExtension::id{NSString}
+  @autoproperty port::id{NSNumber}
+  @autoproperty query::id{NSString}
+  @autoproperty relativePath::id{NSString}
+  @autoproperty relativeString::id{NSString}
+  @autoproperty resourceSpecifier::id{NSString}
+  @autoproperty scheme::id{NSString}
+  @autoproperty standardizedURL::id{NSURL}
+  @autoproperty user::id{NSString}
+
+  # Modifying and Converting a File URL
+  @autoproperty filePathURL::id{NSURL}
+  @autoproperty fileReferenceURL::id{NSURL}
+end
+
+function NSURL(str::Union{String,NSString})
+  NSURL(@objc [NSURL URLWithString:str::id{NSString}]::id{NSURL})
+end
+
+function NSFileURL(path::Union{String,NSString})
+  NSURL(@objc [NSURL fileURLWithPath:path::id{NSString}]::id{NSURL})
+end
+
 
 end
