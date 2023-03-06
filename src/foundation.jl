@@ -160,9 +160,10 @@ function Base.getindex(dict::NSDictionary, key::NSObject)
   return ptr
 end
 
-function Base.Dict{K,V}(dict::NSDictionary) where {K<:NSObject,V<:NSObject}
+function Base.convert(::Type{Dict{K,V}}, dict::NSDictionary) where {K,V}
   Dict{K,V}(zip(K.(keys(dict)), V.(values(dict))))
 end
+Dict{K,V}(dict::NSDictionary) where {K,V} = convert(Dict{K,V}, dict)
 
 
 
@@ -173,7 +174,7 @@ export NSError
 @objcproperties NSError begin
     @autoproperty code::NSInteger
     @autoproperty domain::id{NSString}
-    @autoproperty userInfo::id{NSDictionary}
+    @autoproperty userInfo::id{NSDictionary} type=Dict{NSString,Object}
     @autoproperty localizedDescription::id{NSString}
     @autoproperty localizedRecoveryOptions::id{NSString}
     @autoproperty localizedRecoverySuggestion::id{NSString}

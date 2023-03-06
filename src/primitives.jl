@@ -102,3 +102,10 @@ class(obj::Union{Object,id}) =
 Base.methods(obj::Union{Object,id}) = methods(class(obj))
 
 Base.show(io::IO, obj::T) where {T <: Object} = print(io, "$T (object of type ", class(obj), ")")
+
+struct UnknownObject <: Object
+  ptr::id
+  UnknownObject(ptr::id) = new(ptr)
+end
+Base.unsafe_convert(::Type{id}, obj::UnknownObject) = obj.ptr
+Object(ptr::id) = UnknownObject(ptr)

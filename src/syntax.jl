@@ -227,7 +227,7 @@ macro objcwrapper(ex...)
 
     Base.unsafe_convert(::Type{id}, dev::$instance) = dev.ptr
 
-    # add a pseudo constructor to theh abstract type that also checks for nil pointers.
+    # add a pseudo constructor to the abstract type that also checks for nil pointers.
     function $name(ptr::id)
       ptr == nil && throw(UndefRefError())
       $instance(ptr)
