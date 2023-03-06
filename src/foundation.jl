@@ -3,21 +3,6 @@ module Foundation
 using ..ObjectiveC
 
 
-export NSObject, retain, release, description
-
-abstract type NSObject <: Object end
-
-description(obj::NSObject) = NSString(@objc [obj::id{NSObject} description]::id{NSString})
-
-function Base.show(io::IO, ::MIME"text/plain", obj::NSObject)
-  print(io, String(description(obj)))
-end
-
-release(obj::NSObject) = @objc [obj::id{NSObject} release]::Cvoid
-
-retain(obj::NSObject) = @objc [obj::id{NSObject} retain]::Cvoid
-
-
 export NSInteger, MSIntegerMin, NSIntegerMax, NSUInteger, NSUIntegerMax
 
 if sizeof(Ptr{Cvoid}) == 8
@@ -32,9 +17,32 @@ const NSIntegerMax = typemax(NSInteger)
 const NSUIntegerMax = typemax(NSUInteger)
 
 
+export NSObject, retain, release, description
+
+@objcwrapper NSObject <: Object
+
+@objcproperties NSObject begin
+    @autoproperty hash::NSUInteger
+    @autoproperty description::id{NSString}
+end
+
+function Base.show(io::IO, ::MIME"text/plain", obj::NSObject)
+  print(io, String(obj.description))
+end
+
+release(obj::NSObject) = @objc [obj::id{NSObject} release]::Cvoid
+
+retain(obj::NSObject) = @objc [obj::id{NSObject} retain]::Cvoid
+
+
 export NSString
 
 @objcwrapper NSString <: NSObject
+
+@objcproperties NSString begin
+    @autoproperty length::NSUInteger
+    @autoproperty UTF8String::Ptr{Cchar}
+end
 
 Base.cconvert(::Type{id}, str::String) = NSString(str)
 Base.:(==)(s1::Union{String,NSString}, s2::Union{String,NSString}) = String(s1) == String(s2)
@@ -42,7 +50,7 @@ Base.:(==)(s1::NSString, s2::NSString) = @objc [s1::id{NSString} isEqualToString
 
 NSString() = NSString(@objc [NSString string]::id{NSString})
 NSString(data::String) = NSString(@objc [NSString stringWithUTF8String:data::Ptr{Cchar}]::id{NSString})
-Base.length(s::NSString) = Int(@objc [s::id{NSString} length]::NSUInteger)
+Base.length(s::NSString) = Int(s.length)
 String(s::NSString) = unsafe_string(@objc [s::id{NSString} UTF8String]::Ptr{Cchar})
 Base.show(io::IO, ::MIME"text/plain", s::NSString) = print(io, "NSString(", repr(String(s)), ")")
 Base.show(io::IO, s::NSString) = show(io, String(s))
@@ -51,9 +59,15 @@ export NSHost, current_host, hostname
 
 @objcwrapper NSHost <: NSObject
 
+@objcproperties NSHost begin
+    @autoproperty address::id{NSString}
+    @autoproperty name::id{NSString}
+    @autoproperty names::id{NSArray}
+    @autoproperty localizedName::id{NSString}
+end
+
 current_host() = NSHost(@objc [NSHost currentHost]::id{NSHost})
-hostname() =
-  unsafe_string(@objc [[current_host()::id{NSHost} localizedName]::id{NSString} UTF8String]::Ptr{UInt8})
+hostname() = unsafe_string(current_host().localizedName.UTF8String)
 
 
 export NSBundle, load_framework
@@ -78,13 +92,17 @@ export NSArray
 
 @objcwrapper NSArray <: NSObject
 
+@objcproperties NSArray begin
+    @autoproperty count::NSUInteger
+end
+
 function NSArray(elements::Vector)
     arr = @objc [NSArray arrayWithObjects:elements::Ptr{id}
                                     count:length(elements)::NSUInteger]::id{NSArray}
     return NSArray(arr)
 end
 
-Base.length(arr::NSArray) = Int(@objc [arr::id{NSArray} count]::NSUInteger)
+Base.length(arr::NSArray) = Int(arr.count)
 function Base.getindex(arr::NSArray, i::Int)
   @boundscheck 1 <= i <= length(arr) || throw(BoundsError(arr, i))
   @objc [arr::id{NSArray} objectAtIndex:(i-1)::NSUInteger]::id

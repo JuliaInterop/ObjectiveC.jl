@@ -1,4 +1,7 @@
-export @objc, @objcwrapper
+export @objc, @objcwrapper, @objcproperties
+
+
+# Method Calling
 
 callerror(msg) = error("""ObjectiveC call: $msg
                           Use [obj method]::typ or [obj method :param::typ ...]::typ""")
@@ -48,19 +51,19 @@ function objcm(ex)
         push!(argnames, name)
 
         Meta.isexpr(arg, :(::)) || callerror("missing argument type")
-        val, typ = arg.args
-        if val isa QuoteNode
+        value, typ = arg.args
+        if value isa QuoteNode
             # nameless params are parsed as a symbol
             # (there's an edge case when using e.g. `:length(x)::typ`, causing the `length`
             #  to be parsed as a symbol, but you should just use a param name in that case)
-            val = val.value
+            value = value.value
         end
         if Meta.isexpr(typ, :curly) && typ.args[1] == :id
             # we're passing an object pointer, with additional type info.
             # currently that info isn't used, so just strip it
             typ = typ.args[1]
         end
-        push!(argvals, val)
+        push!(argvals, value)
         push!(argtyps, typ)
     end
 
@@ -92,15 +95,15 @@ function objcm(ex)
         class_message(obj, sel, rettyp, argtyps, argvals)
     elseif Meta.isexpr(obj, :(::))
         # instance
-        val, typ = obj.args
-        if val isa Expr
+        value, typ = obj.args
+        if value isa Expr
             # possibly dealing with a nested expression, so recurse
             quote
                 obj = $(objcm(obj))
                 $(instance_message(:obj, sel, rettyp, argtyps, argvals))
             end
         else
-            instance_message(esc(val), sel, rettyp, argtyps, argvals)
+            instance_message(esc(value), sel, rettyp, argtyps, argvals)
         end
         # XXX: do something with the instance type?
     else
@@ -170,13 +173,13 @@ macro objcwrapper(ex...)
   immutable = true
   for kw in kwargs
     if kw isa Expr && kw.head == :(=)
-      kw, val = kw.args
+      kw, value = kw.args
       if kw == :comparison
-        val isa Bool || wrappererror("comparison keyword argument must be a literal boolean")
-        comparison = val
+        value isa Bool || wrappererror("comparison keyword argument must be a literal boolean")
+        comparison = value
       elseif kw == :immutable
-        val isa Bool || wrappererror("immutable keyword argument must be a literal boolean")
-        immutable = val
+        value isa Bool || wrappererror("immutable keyword argument must be a literal boolean")
+        immutable = value
       else
         wrappererror("unrecognized keyword argument: $kw")
       end
@@ -242,4 +245,228 @@ macro objcwrapper(ex...)
   end
 
   esc(ex)
+end
+
+
+# Property Accesors
+
+objc_propertynames(obj::Type{<:Object}) = Symbol[]
+
+propertyerror(s::String) = error("""Objective-C property declaration: $s.
+                                    Refer to the @objcproperties docstring for more details.""")
+
+"""
+    @objcproperties ObjCType begin
+        @autoproperty myProperty::ObjCType [type=JuliaType] [setter=setMyProperty]
+
+        @getproperty myProperty function(obj)
+            ...
+        end
+        @setproperty! myProperty function(obj, value)
+            ...
+        end
+    end
+
+Helper macro for automatically generating definitions for the `propertynames`,
+`getproperty`, and `setproperty!` methods for an Objective-C type. The first argument
+`ObjCType` is the Julia type corresponding to the Objective-C type, and following block
+contains a series of property declarations:
+
+- `@autoproperty myProperty::ObjCType`: automatically generate a definition for accessing
+  property `myProperty` that has Objective-C type `ObjCType` (typically a pointer type like
+  `id{AnotherObjCType}`). Several keyword arguments are supported:
+  - `type`: specifies the Julia type that the property value should be converted to by
+    calling `convert(type, value)`. Note that this is not needed for `id{ObjCType}`
+    properties, which are automatically converted to `ObjCType` objects (after a `nil`
+    check, returning `nothing` if the check fails).
+  - `setter`: specifies the name of the Objective-C setter method. Without this, no
+    `setproperty!` definition will be generated.
+- `@getproperty myProperty function(obj) ... end`: define a custom getter for the property.
+  The function should take a single argument `obj`, which is the object that the property is
+  being accessed on. The function should return the property value.
+- `@setproperty! myProperty function(obj, value) ... end`: define a custom setter for the
+  property. The function should take two arguments, `obj` and `value`, which are the object
+  that the property is being set on, and the value that the property is being set to,
+  respectively.
+"""
+macro objcproperties(typ, ex)
+    isa(typ, Symbol) || propertyerror("expected a type name")
+    Meta.isexpr(ex, :block) || propertyerror("expected a block of property declarations")
+
+    propertynames = Set{Symbol}()
+    read_properties = Dict{Symbol,Expr}()
+    write_properties = Dict{Symbol,Expr}()
+
+    for arg in ex.args
+        isa(arg, LineNumberNode) && continue
+        Meta.isexpr(arg, :macrocall) || propertyerror("invalid property declaration $arg")
+
+        # split the contained macrocall into its parts
+        cmd = arg.args[1]
+        kwargs = Dict()
+        positionals = []
+        for arg in arg.args[2:end]
+            isa(arg, LineNumberNode) && continue
+            if isa(arg, Expr) && arg.head == :(=)
+                kwargs[arg.args[1]] = arg.args[2]
+            else
+                push!(positionals, arg)
+            end
+        end
+
+        # there should only be a single positional argument,
+        # containing the property name (and optionally its type)
+        length(positionals) >= 1 || propertyerror("$cmd requires a positional argument")
+        property_arg = popfirst!(positionals)
+        if property_arg isa Symbol
+            property = property_arg
+            srcTyp = nothing
+        elseif Meta.isexpr(property_arg, :(::))
+            property = property_arg.args[1]
+            srcTyp = property_arg.args[2]
+        else
+            propertyerror("invalid property specification $(property_arg)")
+        end
+        push!(propertynames, property)
+
+        # HACK: we use `id{typ}` syntax, which is invalid as `id` isn't parameterized.
+        #       normally that doesn't matter because `@objc` ignores the param,
+        #       but here it breaks the ability to `esc` such an expression.
+        if Meta.isexpr(srcTyp, :curly) && srcTyp.args[1] == :id
+          safeSrcTyp = :id
+        else
+          safeSrcTyp = srcTyp
+        end
+
+        # handle the various property declarations. this assumes :object and :value symbol
+        # names for the arguments to `getproperty` and `setproperty!`, as generated below.
+        if cmd == Symbol("@autoproperty")
+            srcTyp === nothing && propertyerror("missing type for property $property")
+            dstTyp = get(kwargs, :type, nothing)
+
+            getproperty_ex = quote
+                value = @objc [object::id{$(esc(typ))} $property]::$(esc(safeSrcTyp))
+            end
+
+            # if we're dealing with a typed object pointer, do a nil check and create an object
+            if Meta.isexpr(srcTyp, :curly) && srcTyp.args[1] == :id
+                objTyp = srcTyp.args[2]
+                append!(getproperty_ex.args, (quote
+                    value == nil && return nothing
+                    value = $(esc(objTyp))(value)
+                end).args)
+            end
+
+            # convert the value, if necessary
+            if dstTyp !== nothing
+                append!(getproperty_ex.args, (quote
+                    value = convert($(esc(dstTyp)), value)
+                end).args)
+            end
+
+            push!(getproperty_ex.args, :(return value))
+
+            haskey(read_properties, property) && propertyerror("duplicate property $property")
+            read_properties[property] = getproperty_ex
+
+            if haskey(kwargs, :setter)
+                setproperty_ex = quote
+                    @objc [object::id{$(esc(typ))} $(kwargs[:setter]):value::$(esc(safeSrcTyp))]::Nothing
+                end
+
+                haskey(write_properties, property) && propertyerror("duplicate property $property")
+                write_properties[property] = setproperty_ex
+            end
+        elseif cmd == Symbol("@getproperty")
+            haskey(read_properties, property) && propertyerror("duplicate property $property")
+            function_arg = popfirst!(positionals)
+            read_properties[property] = quote
+                f = $function_arg
+                f(object)
+            end
+        elseif cmd == Symbol("@setproperty!")
+            haskey(write_properties, property) && propertyerror("duplicate property $property")
+            function_arg = popfirst!(positionals)
+            write_properties[property] = quote
+                f = $function_arg
+                f(object, value)
+            end
+        else
+            propertyerror("unrecognized property declaration $cmd")
+        end
+
+        isempty(positionals) || propertyerror("too many positional arguments")
+    end
+
+    # generate Base.propertynames definition
+    propertynames_ex = quote
+        function $ObjectiveC.objc_propertynames(::Type{$(esc(typ))})
+            properties = [$(map(QuoteNode, collect(propertynames))...)]
+            if supertype($(esc(typ))) != Any
+                properties = union(properties, $ObjectiveC.objc_propertynames(supertype($(esc(typ)))))
+            end
+            return properties
+        end
+        function Base.propertynames(::$(esc(typ)))
+          $ObjectiveC.objc_propertynames($(esc(typ)))
+        end
+    end
+
+    # generate `Base.getproperty` definition, if needed
+    getproperties_ex = quote end
+    if !isempty(read_properties)
+      current = nothing
+      for (property, body) in read_properties
+          test = :(field === $(QuoteNode(property)))
+          if current === nothing
+              current = Expr(:if, test, body)
+              getproperties_ex = current
+          else
+              new = Expr(:elseif, test, body)
+              push!(current.args, new)
+              current = new
+          end
+      end
+
+      # finally, call our parent's `getproperty`
+      final = :(invoke(getproperty, Tuple{supertype($(esc(typ))), Symbol}, object, field))
+      push!(current.args, :(@inline $final))
+      getproperties_ex = quote
+          function Base.getproperty(object::$(esc(typ)), field::Symbol)
+            $getproperties_ex
+          end
+      end
+    end
+
+    # generate `Base.setproperty!` definition, if needed
+    setproperties_ex = quote end
+    if !isempty(write_properties)
+      current = nothing
+      for (property, body) in write_properties
+          test = :(field === $(QuoteNode(property)))
+          if current === nothing
+              current = Expr(:if, test, body)
+              setproperties_ex = current
+          else
+              new = Expr(:elseif, test, body)
+              push!(current.args, new)
+              current = new
+          end
+      end
+
+      # finally, call our parent's `getproperty`
+      final = :(invoke(setproperty!, Tuple{supertype($(esc(typ))), Symbol, Any}, object, field))
+      push!(current.args, :(@inline $final))
+      setproperties_ex = quote
+          function Base.setproperty!(object::$(esc(typ)), field::Symbol, value::Any)
+            $setproperties_ex
+          end
+      end
+    end
+
+    return quote
+        $(propertynames_ex.args...)
+        $(getproperties_ex.args...)
+        $(setproperties_ex.args...)
+    end
 end
