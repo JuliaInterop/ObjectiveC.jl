@@ -55,6 +55,10 @@ String(s::NSString) = unsafe_string(@objc [s::id{NSString} UTF8String]::Ptr{Ccha
 Base.show(io::IO, ::MIME"text/plain", s::NSString) = print(io, "NSString(", repr(String(s)), ")")
 Base.show(io::IO, s::NSString) = show(io, String(s))
 
+Base.contains(s::NSString, t::AbstractString) = @objc [s::id{NSString} containsString:t::id{NSString}]::Bool
+Base.contains(s::AbstractString, t::NSString) = @objc [s::id{NSString} containsString:t::id{NSString}]::Bool
+
+
 export NSHost, current_host, hostname
 
 @objcwrapper NSHost <: NSObject
@@ -145,6 +149,8 @@ function NSDictionary(items::Dict{<:NSObject,<:NSObject})
 end
 
 Base.length(dict::NSDictionary) = Int(dict.count)
+Base.isempty(dict::NSDictionary) = length(dict) == 0
+
 Base.keys(dict::NSDictionary) = dict.allKeys
 Base.values(dict::NSDictionary) = dict.allValues
 
@@ -152,6 +158,37 @@ function Base.getindex(dict::NSDictionary, key::NSObject)
   ptr = @objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::id
   ptr == nil && throw(KeyError(key))
   return ptr
+end
+
+
+
+export NSError
+
+@objcwrapper NSError <: NSObject
+
+@objcproperties NSError begin
+    @autoproperty code::NSInteger
+    @autoproperty domain::id{NSString}
+    @autoproperty userInfo::id{NSDictionary}
+    @autoproperty localizedDescription::id{NSString}
+    @autoproperty localizedRecoveryOptions::id{NSString}
+    @autoproperty localizedRecoverySuggestion::id{NSString}
+    @autoproperty localizedFailureReason::id{NSString}
+end
+# TODO: userInfo
+
+function NSError(domain, code)
+  err = @objc [NSError errorWithDomain:domain::id{NSString}
+                       code:code::NSInteger
+                       userInfo:nil::id{NSDictionary}]::id{NSError}
+  return NSError(err)
+end
+
+function NSError(domain, code, userInfo)
+  err = @objc [NSError errorWithDomain:domain::id{NSString}
+                       code:code::NSInteger
+                       userInfo:userInfo::id{NSDictionary}]::id{NSError}
+  return NSError(err)
 end
 
 end

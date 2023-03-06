@@ -84,4 +84,11 @@ end
     @test_throws KeyError dict[str2]
 end
 
+@testset "NSError" begin
+    err = NSError("NSPOSIXErrorDomain", 1)
+    @test isempty(err.userInfo)
+    @test contains(err.localizedFailureReason, "Operation not permitted")
+end
+
+
 end
