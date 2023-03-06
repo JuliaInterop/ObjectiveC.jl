@@ -94,5 +94,24 @@ end
     @test contains(err.localizedFailureReason, "Operation not permitted")
 end
 
+end
+
+@testset "dispatch" begin
+
+using .Dispatch
+
+@testset "dispatch_data" begin
+    arr = [1]
+    GC.@preserve arr begin
+        data = dispatch_data(pointer(arr), sizeof(arr))
+
+        retain(data)
+        release(data)
+
+        @test sizeof(data) == sizeof(arr)
+
+        release(data)
+    end
+end
 
 end

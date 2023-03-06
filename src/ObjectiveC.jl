@@ -15,6 +15,7 @@ include("classes.jl")
 
 # API wrappers
 include("foundation.jl")
-export Foundation
+include("dispatch.jl")
+export Foundation, Dispatch
 
 end
