@@ -160,6 +160,10 @@ function Base.getindex(dict::NSDictionary, key::NSObject)
   return ptr
 end
 
+function Base.Dict{K,V}(dict::NSDictionary) where {K<:NSObject,V<:NSObject}
+  Dict{K,V}(zip(K.(keys(dict)), V.(values(dict))))
+end
+
 
 
 export NSError

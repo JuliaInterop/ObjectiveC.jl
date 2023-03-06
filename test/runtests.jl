@@ -76,12 +76,14 @@ end
 @testset "NSDictionary" begin
     str1 = NSString("Hello")
     str2 = NSString("World")
-    dict = NSDictionary(Dict(str1 => str2))
-    @test length(dict) == 1
-    @test keys(dict) == NSArray([str1])
-    @test values(dict) == NSArray([str2])
-    @test NSString(dict[str1]) == "World"
-    @test_throws KeyError dict[str2]
+    dict1 = Dict(str1 => str2)
+    dict2 = NSDictionary(dict1)
+    @test length(dict2) == 1
+    @test keys(dict2) == NSArray([str1])
+    @test values(dict2) == NSArray([str2])
+    @test NSString(dict2[str1]) == "World"
+    @test_throws KeyError dict2[str2]
+    @test Dict{NSString,NSString}(dict2) == dict1
 end
 
 @testset "NSError" begin
