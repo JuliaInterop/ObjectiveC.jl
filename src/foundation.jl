@@ -51,7 +51,12 @@ Base.:(==)(s1::NSString, s2::NSString) = @objc [s1::id{NSString} isEqualToString
 NSString() = NSString(@objc [NSString string]::id{NSString})
 NSString(data::String) = NSString(@objc [NSString stringWithUTF8String:data::Ptr{Cchar}]::id{NSString})
 Base.length(s::NSString) = Int(s.length)
-String(s::NSString) = unsafe_string(@objc [s::id{NSString} UTF8String]::Ptr{Cchar})
+Base.String(s::NSString) = unsafe_string(@objc [s::id{NSString} UTF8String]::Ptr{Cchar})
+
+# avoid redundant quotes
+Base.string(s::NSString) = String(s)
+Base.print(io::IO, s::NSString) = print(io, String(s))
+
 Base.show(io::IO, ::MIME"text/plain", s::NSString) = print(io, "NSString(", repr(String(s)), ")")
 Base.show(io::IO, s::NSString) = show(io, String(s))
 
@@ -194,6 +199,22 @@ function NSError(domain, code, userInfo)
                        code:code::NSInteger
                        userInfo:userInfo::id{NSDictionary}]::id{NSError}
   return NSError(err)
+end
+
+function Base.showerror(io::IO, err::NSError)
+  print(io, "NSError: $(err.localizedDescription) ($(err.domain), code $(err.code))")
+
+  if err.localizedFailureReason !== nothing
+    print(io, "\nFailure reason: $(err.localizedFailureReason)")
+  end
+
+  recovery_options = err.localizedRecoveryOptions
+  if recovery_options !== nothing
+    print(io, "\nRecovery Options:")
+    for option in recovery_options
+      print(io, "\n - $(option)")
+    end
+  end
 end
 
 end
