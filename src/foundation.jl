@@ -88,6 +88,14 @@ end
 load_framework(name) = load(NSBundle("/System/Library/Frameworks/$name.framework"))
 
 
+export NSRange
+
+struct NSRange
+    location::NSUInteger
+    length::NSUInteger
+end
+
+
 export NSArray
 
 @objcwrapper NSArray <: NSObject
@@ -95,6 +103,8 @@ export NSArray
 @objcproperties NSArray begin
     @autoproperty count::NSUInteger
 end
+
+NSArray() = NSArray(@objc [NSArray array]::id{NSArray})
 
 function NSArray(elements::Vector)
     arr = @objc [NSArray arrayWithObjects:elements::Ptr{id}
@@ -110,12 +120,38 @@ end
 
 Base.iterate(arr::NSArray, i::Int=1) = i > length(arr) ? nothing : (arr[i], i+1)
 
+Base.:(==)(a1::NSArray, a2::NSArray) =
+  @objc [a1::id{NSArray} isEqualToArray:a2::id{NSArray}]::Bool
 
-export NSRange
 
-struct NSRange
-    location::NSUInteger
-    length::NSUInteger
+export NSDictionary
+
+@objcwrapper NSDictionary <: NSObject
+
+@objcproperties NSDictionary begin
+    @autoproperty count::NSUInteger
+    @autoproperty allKeys::id{NSArray}
+    @autoproperty allValues::id{NSArray}
+end
+
+NSDictionary() = NSDictionary(@objc [NSDictionary dictionary]::id{NSDictionary})
+
+function NSDictionary(items::Dict{<:NSObject,<:NSObject})
+    nskeys = NSArray(collect(keys(items)))
+    nsvals = NSArray(collect(values(items)))
+    dict = @objc [NSDictionary dictionaryWithObjects:nsvals::id{NSArray}
+                               forKeys:nskeys::id{NSArray}]::id{NSDictionary}
+    return NSDictionary(dict)
+end
+
+Base.length(dict::NSDictionary) = Int(dict.count)
+Base.keys(dict::NSDictionary) = dict.allKeys
+Base.values(dict::NSDictionary) = dict.allValues
+
+function Base.getindex(dict::NSDictionary, key::NSObject)
+  ptr = @objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::id
+  ptr == nil && throw(KeyError(key))
+  return ptr
 end
 
 end
