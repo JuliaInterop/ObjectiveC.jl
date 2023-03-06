@@ -94,6 +94,16 @@ end
     @test contains(err.localizedFailureReason, "Operation not permitted")
 end
 
+@testset "NSValue" begin
+    val1 = Ptr{Cvoid}(12345)
+    val2 = NSValue(val1)
+    @test val2.pointerValue == val1
+    @test val2 == NSValue(val1)
+
+    val3 = NSRange(1,2)
+    val4 = NSValue(val3)
+    @test val4.rangeValue == val3
+    @test val4 != val2
 end
 
 @testset "dispatch" begin

@@ -38,6 +38,33 @@ release(obj::NSObject) = @objc [obj::id{NSObject} release]::Cvoid
 retain(obj::NSObject) = @objc [obj::id{NSObject} retain]::Cvoid
 
 
+export NSRange
+
+struct NSRange
+    location::NSUInteger
+    length::NSUInteger
+end
+
+
+export NSValue
+
+@objcwrapper NSValue <: NSObject
+
+Base.:(==)(v1::NSValue, v2::NSValue) =
+  @objc [v1::id{NSValue} isEqualToValue:v2::id{NSValue}]::Bool
+
+@objcproperties NSValue begin
+    @autoproperty objCType::Ptr{Cchar}
+    @autoproperty pointerValue::Ptr{Cvoid}
+    @autoproperty rangeValue::NSRange
+    # ...
+end
+
+NSValue(x::Ptr) = NSValue(@objc [NSValue valueWithPointer:x::Ptr{Cvoid}]::id{NSValue})
+NSValue(x::NSRange) = NSValue(@objc [NSValue valueWithRange:x::NSRange]::id{NSValue})
+# ...
+
+
 export NSString
 
 #@objcwrapper NSString <: NSObject
@@ -65,14 +92,6 @@ Base.show(io::IO, s::NSString) = show(io, String(s))
 
 Base.contains(s::NSString, t::AbstractString) = @objc [s::id{NSString} containsString:t::id{NSString}]::Bool
 Base.contains(s::AbstractString, t::NSString) = @objc [s::id{NSString} containsString:t::id{NSString}]::Bool
-
-
-export NSRange
-
-struct NSRange
-    location::NSUInteger
-    length::NSUInteger
-end
 
 
 export NSArray
