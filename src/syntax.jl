@@ -24,11 +24,6 @@ function objcm(ex)
     # parse the call return type
     Meta.isexpr(ex, :(::)) || callerror("missing return type")
     call, rettyp = ex.args
-    if Meta.isexpr(rettyp, :curly) && rettyp.args[1] == :id
-        # we're returning an object pointer, with additional type info.
-        # currently that info isn't used, so just strip it
-        rettyp = rettyp.args[1]
-    end
 
     # parse the call
     if Meta.isexpr(call, :vcat)
@@ -57,11 +52,6 @@ function objcm(ex)
             # (there's an edge case when using e.g. `:length(x)::typ`, causing the `length`
             #  to be parsed as a symbol, but you should just use a param name in that case)
             value = value.value
-        end
-        if Meta.isexpr(typ, :curly) && typ.args[1] == :id
-            # we're passing an object pointer, with additional type info.
-            # currently that info isn't used, so just strip it
-            typ = typ.args[1]
         end
         push!(argvals, value)
         push!(argtyps, typ)
@@ -127,7 +117,7 @@ function instance_message(instance, msg, rettyp, argtyps, argvals)
     quote
         sel = Selector($(String(msg)))
         ccall(:objc_msgSend, $(esc(rettyp)),
-              (id, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+              (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
               $instance, sel, $(map(esc, argvals)...))
     end
 end
@@ -209,14 +199,14 @@ macro objcwrapper(ex...)
     quote
       $(ex.args...)
       struct $instance <: $name
-        ptr::id
+        ptr::id{$name}
       end
     end
   else
     quote
       $(ex.args...)
       mutable struct $instance <: $name
-        ptr::id
+        ptr::id{$name}
       end
     end
   end
@@ -225,7 +215,7 @@ macro objcwrapper(ex...)
   ex = quote
     $(ex.args...)
 
-    Base.unsafe_convert(::Type{id}, dev::$instance) = dev.ptr
+    Base.unsafe_convert(T::Type{<:id}, dev::$instance) = convert(T, dev.ptr)
 
     # add a pseudo constructor to the abstract type that also checks for nil pointers.
     function $name(ptr::id)
@@ -329,15 +319,6 @@ macro objcproperties(typ, ex)
         end
         push!(propertynames, property)
 
-        # HACK: we use `id{typ}` syntax, which is invalid as `id` isn't parameterized.
-        #       normally that doesn't matter because `@objc` ignores the param,
-        #       but here it breaks the ability to `esc` such an expression.
-        if Meta.isexpr(srcTyp, :curly) && srcTyp.args[1] == :id
-          safeSrcTyp = :id
-        else
-          safeSrcTyp = srcTyp
-        end
-
         # handle the various property declarations. this assumes :object and :value symbol
         # names for the arguments to `getproperty` and `setproperty!`, as generated below.
         if cmd == Symbol("@autoproperty")
@@ -345,7 +326,7 @@ macro objcproperties(typ, ex)
             dstTyp = get(kwargs, :type, nothing)
 
             getproperty_ex = quote
-                value = @objc [object::id{$(esc(typ))} $property]::$(esc(safeSrcTyp))
+                value = @objc [object::id{$(esc(typ))} $property]::$(esc(srcTyp))
             end
 
             # if we're dealing with a typed object pointer, do a nil check and create an object
@@ -371,7 +352,7 @@ macro objcproperties(typ, ex)
 
             if haskey(kwargs, :setter)
                 setproperty_ex = quote
-                    @objc [object::id{$(esc(typ))} $(kwargs[:setter]):value::$(esc(safeSrcTyp))]::Nothing
+                    @objc [object::id{$(esc(typ))} $(kwargs[:setter]):value::$(esc(srcTyp))]::Nothing
                 end
 
                 haskey(write_properties, property) && propertyerror("duplicate property $property")

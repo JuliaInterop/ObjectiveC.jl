@@ -5,25 +5,25 @@ using ObjectiveC
 
 @testset "@objc" begin
     # class methods
-    @objc [NSString new]::id
+    @objc [NSString new]::id{Object}
     data = "test"
-    @objc [NSString stringWithUTF8String:data::Ptr{UInt8}]::id
-    @objc [NSString stringWithUTF8String:"test"::Ptr{UInt8}]::id
-    obj = @objc [NSString stringWithUTF8String:"test"::Ptr{UInt8}]::id{NSString}
+    @objc [NSString stringWithUTF8String:data::Ptr{UInt8}]::id{Object}
+    @objc [NSString stringWithUTF8String:"test"::Ptr{UInt8}]::id{Object}
+    obj = @objc [NSString stringWithUTF8String:"test"::Ptr{UInt8}]::id{Object}
 
     # instance methods
-    @objc [obj::id length]::UInt
-    @objc [obj::id{NSString} length]::UInt
-    @test @objc [obj::id{NSString} isEqualTo:obj::id]::Bool
-    empty_str = @objc [NSString string]::id{NSString}
-    @objc [obj::id stringByReplacingOccurrencesOfString:empty_str::id withString:empty_str::id]::id
+    @objc [obj::id{Object} length]::UInt
+    @objc [obj::id{Object} length]::UInt
+    @test @objc [obj::id{Object} isEqualTo:obj::id{Object}]::Bool
+    empty_str = @objc [NSString string]::id{Object}
+    @objc [obj::id stringByReplacingOccurrencesOfString:empty_str::id{Object} withString:empty_str::id{Object}]::id{Object}
 end
 
 # smoke test
 @objcwrapper TestNSString <: Object
 let data = "test"
-    ptr = @objc [NSString stringWithUTF8String:data::Ptr{UInt8}]::id
-    @test ptr isa id
+    ptr = @objc [NSString stringWithUTF8String:data::Ptr{UInt8}]::id{TestNSString}
+    @test ptr isa id{TestNSString}
     @test class(ptr) isa Class
     @test "length" in methods(ptr)
     @test 4 == @objc [ptr::id length]::Culong
@@ -69,8 +69,8 @@ end
     str2 = NSString("World")
     arr = NSArray([str1, str2])
     @test length(arr) == 2
-    @test NSString(arr[1]) == "Hello"
-    @test NSString(arr[2]) == "World"
+    @test reinterpret(NSString, arr[1]) == "Hello"
+    @test reinterpret(NSString, arr[2]) == "World"
 end
 
 @testset "NSDictionary" begin
@@ -81,7 +81,7 @@ end
     @test length(dict2) == 1
     @test keys(dict2) == NSArray([str1])
     @test values(dict2) == NSArray([str2])
-    @test NSString(dict2[str1]) == "World"
+    @test reinterpret(NSString, dict2[str1]) == "World"
     @test_throws KeyError dict2[str2]
     @test Dict{NSString,NSString}(dict2) == dict1
 end

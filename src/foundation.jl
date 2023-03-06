@@ -21,6 +21,9 @@ export NSObject, retain, release, description
 
 @objcwrapper NSObject <: Object
 
+# forward declaration
+@objcwrapper NSString <: NSObject
+
 @objcproperties NSObject begin
     @autoproperty hash::NSUInteger
     @autoproperty description::id{NSString}
@@ -37,14 +40,14 @@ retain(obj::NSObject) = @objc [obj::id{NSObject} retain]::Cvoid
 
 export NSString
 
-@objcwrapper NSString <: NSObject
+#@objcwrapper NSString <: NSObject
 
 @objcproperties NSString begin
     @autoproperty length::NSUInteger
     @autoproperty UTF8String::Ptr{Cchar}
 end
 
-Base.cconvert(::Type{id}, str::String) = NSString(str)
+Base.cconvert(::Type{id{NSString}}, str::String) = NSString(str)
 Base.:(==)(s1::Union{String,NSString}, s2::Union{String,NSString}) = String(s1) == String(s2)
 Base.:(==)(s1::NSString, s2::NSString) = @objc [s1::id{NSString} isEqualToString:s2::id{NSString}]::Bool
 
@@ -62,39 +65,6 @@ Base.show(io::IO, s::NSString) = show(io, String(s))
 
 Base.contains(s::NSString, t::AbstractString) = @objc [s::id{NSString} containsString:t::id{NSString}]::Bool
 Base.contains(s::AbstractString, t::NSString) = @objc [s::id{NSString} containsString:t::id{NSString}]::Bool
-
-
-export NSHost, current_host, hostname
-
-@objcwrapper NSHost <: NSObject
-
-@objcproperties NSHost begin
-    @autoproperty address::id{NSString}
-    @autoproperty name::id{NSString}
-    @autoproperty names::id{NSArray}
-    @autoproperty localizedName::id{NSString}
-end
-
-current_host() = NSHost(@objc [NSHost currentHost]::id{NSHost})
-hostname() = unsafe_string(current_host().localizedName.UTF8String)
-
-
-export NSBundle, load_framework
-
-@objcwrapper NSBundle <: NSObject
-
-function NSBundle(path::Union{String,NSString})
-  ptr = @objc [NSBundle bundleWithPath:path::id{NSString}]::id{NSBundle}
-  ptr == nil && error("Couldn't find bundle '$path'")
-  NSBundle(ptr)
-end
-
-function load(bundle::NSBundle)
-  loaded = @objc [bundle::id{NSBundle} load]::Bool
-  loaded || error("Couldn't load bundle")
-end
-
-load_framework(name) = load(NSBundle("/System/Library/Frameworks/$name.framework"))
 
 
 export NSRange
@@ -124,7 +94,7 @@ end
 Base.length(arr::NSArray) = Int(arr.count)
 function Base.getindex(arr::NSArray, i::Int)
   @boundscheck 1 <= i <= length(arr) || throw(BoundsError(arr, i))
-  @objc [arr::id{NSArray} objectAtIndex:(i-1)::NSUInteger]::id
+  @objc [arr::id{NSArray} objectAtIndex:(i-1)::NSUInteger]::id{Object}
 end
 
 Base.iterate(arr::NSArray, i::Int=1) = i > length(arr) ? nothing : (arr[i], i+1)
@@ -160,13 +130,14 @@ Base.keys(dict::NSDictionary) = dict.allKeys
 Base.values(dict::NSDictionary) = dict.allValues
 
 function Base.getindex(dict::NSDictionary, key::NSObject)
-  ptr = @objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::id
+  ptr = @objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::id{Object}
   ptr == nil && throw(KeyError(key))
   return ptr
 end
 
 function Base.convert(::Type{Dict{K,V}}, dict::NSDictionary) where {K,V}
-  Dict{K,V}(zip(K.(keys(dict)), V.(values(dict))))
+  Dict{K,V}(zip(map(Base.Fix1(reinterpret, K), keys(dict)),
+                map(Base.Fix1(reinterpret, V), values(dict))))
 end
 Dict{K,V}(dict::NSDictionary) where {K,V} = convert(Dict{K,V}, dict)
 
@@ -216,5 +187,38 @@ function Base.showerror(io::IO, err::NSError)
     end
   end
 end
+
+
+export NSHost, current_host, hostname
+
+@objcwrapper NSHost <: NSObject
+
+@objcproperties NSHost begin
+    @autoproperty address::id{NSString}
+    @autoproperty name::id{NSString}
+    @autoproperty names::id{NSArray}
+    @autoproperty localizedName::id{NSString}
+end
+
+current_host() = NSHost(@objc [NSHost currentHost]::id{NSHost})
+hostname() = unsafe_string(current_host().localizedName.UTF8String)
+
+
+export NSBundle, load_framework
+
+@objcwrapper NSBundle <: NSObject
+
+function NSBundle(path::Union{String,NSString})
+  ptr = @objc [NSBundle bundleWithPath:path::id{NSString}]::id{NSBundle}
+  ptr == nil && error("Couldn't find bundle '$path'")
+  NSBundle(ptr)
+end
+
+function load(bundle::NSBundle)
+  loaded = @objc [bundle::id{NSBundle} load]::Bool
+  loaded || error("Couldn't load bundle")
+end
+
+load_framework(name) = load(NSBundle("/System/Library/Frameworks/$name.framework"))
 
 end

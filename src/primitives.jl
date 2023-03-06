@@ -82,22 +82,61 @@ function Base.methods(class::Class)
 end
 
 
+# Object Pointer
+
+if sizeof(Ptr{Cvoid}) == 8
+    primitive type id{T} 64 end
+else
+    primitive type id{T} 32 end
+end
+
+# constructor
+id{T}(x::Union{Int,UInt,id}) where {T} = Base.bitcast(id{T}, x)
+
+# getters
+Base.eltype(::Type{<:id{T}}) where {T} = T
+
+# comparison
+Base.:(==)(x::id, y::id) = Base.bitcast(UInt, x) == Base.bitcast(UInt, y)
+## refuse comparison with unrelated pointer types
+Base.:(==)(x::id, y::Ptr) = throw(ArgumentError("Cannot compare id with Ptr"))
+Base.:(==)(x::Ptr, y::id) = throw(ArgumentError("Cannot compare id with Ptr"))
+
+# conversion between pointers: refuse to convert between unrelated types
+function Base.convert(::Type{id{T}}, x::id{U}) where {T,U}
+  # nil is an exception (we want to be able to use `nil` in `@objc` directly)
+  x == nil && return Base.bitcast(id{T}, nil)
+  # otherwise, types must match (i.e., only allow converting to a supertype)
+  U <: T || throw(ArgumentError("Cannot convert id{$U} to id{$T}"))
+  Base.bitcast(id{T}, x)
+end
+
+# `reinterpret` can be used to force conversion, typically from untyped `id{Object}`
+Base.reinterpret(::Type{id{T}}, x::id) where {T} = Base.bitcast(id{T}, x)
+
+# defer conversions from objects to `unsafe_convert`
+Base.cconvert(::Type{<:id}, x) = x
+
+# fallback for `unsafe_convert`
+Base.unsafe_convert(::Type{P}, x::id) where {P<:id} = convert(P, x)
+
+
 # Objects
 
 # Object is an abstract type, so that we can define subtypes with constructors.
 # The expected interface is that any subtype of Object should be convertible to id.
 
-abstract type OpaqueObject end
-const id = Ptr{OpaqueObject}
-
-const nil = id(C_NULL)
-
 abstract type Object end
 # interface: subtypes of Object should be convertible to `id`s
 #            (i.e., `Base.unsafe_convert(::Type{id}, ::MyObj)`)
 
+const nil = id{Object}(0)
+
+# for convenience, make `reinterpret` work on object output types as well
+Base.reinterpret(::Type{T}, x::id) where {T<:Object} = T(Base.bitcast(id{T}, x))
+
 class(obj::Union{Object,id}) =
-  ccall(:object_getClass, Ptr{Cvoid}, (id,), obj) |> Class
+  ccall(:object_getClass, Ptr{Cvoid}, (id{Object},), obj) |> Class
 
 Base.methods(obj::Union{Object,id}) = methods(class(obj))
 
