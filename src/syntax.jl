@@ -411,7 +411,11 @@ macro objcproperties(typ, ex)
 
       # finally, call our parent's `getproperty`
       final = :(invoke(getproperty, Tuple{supertype($(esc(typ))), Symbol}, object, field))
-      push!(current.args, :(@inline $final))
+      if VERSION >= v"1.8"
+        push!(current.args, :(@inline $final))
+      else
+        push!(current.args, :($final))
+      end
       getproperties_ex = quote
           function Base.getproperty(object::$(esc(typ)), field::Symbol)
             $getproperties_ex
@@ -437,7 +441,11 @@ macro objcproperties(typ, ex)
 
       # finally, call our parent's `getproperty`
       final = :(invoke(setproperty!, Tuple{supertype($(esc(typ))), Symbol, Any}, object, field))
-      push!(current.args, :(@inline $final))
+      if VERSION >= v"1.8"
+        push!(current.args, :(@inline $final))
+      else
+        push!(current.args, :($final))
+      end
       setproperties_ex = quote
           function Base.setproperty!(object::$(esc(typ)), field::Symbol, value::Any)
             $setproperties_ex
