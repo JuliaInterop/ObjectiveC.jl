@@ -102,6 +102,12 @@ Base.iterate(arr::NSArray, i::Int=1) = i > length(arr) ? nothing : (arr[i], i+1)
 Base.:(==)(a1::NSArray, a2::NSArray) =
   @objc [a1::id{NSArray} isEqualToArray:a2::id{NSArray}]::Bool
 
+# conversion to typed Julia array
+function Base.convert(::Type{Vector{T}}, arr::NSArray) where {T}
+  [reinterpret(T, arr[i]) for i in 1:length(arr)]
+end
+Vector{T}(arr::NSArray) where {T} = convert(Vector{T}, arr)
+
 
 export NSDictionary
 
@@ -135,6 +141,7 @@ function Base.getindex(dict::NSDictionary, key::NSObject)
   return ptr
 end
 
+# conversion to typed Julia dictionary
 function Base.convert(::Type{Dict{K,V}}, dict::NSDictionary) where {K,V}
   Dict{K,V}(zip(map(Base.Fix1(reinterpret, K), keys(dict)),
                 map(Base.Fix1(reinterpret, V), values(dict))))

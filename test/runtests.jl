@@ -67,10 +67,12 @@ end
 @testset "NSArray" begin
     str1 = NSString("Hello")
     str2 = NSString("World")
-    arr = NSArray([str1, str2])
-    @test length(arr) == 2
-    @test reinterpret(NSString, arr[1]) == "Hello"
-    @test reinterpret(NSString, arr[2]) == "World"
+    arr1 = [str1, str2]
+    arr2 = NSArray([str1, str2])
+    @test length(arr2) == 2
+    @test reinterpret(NSString, arr2[1]) == "Hello"
+    @test reinterpret(NSString, arr2[2]) == "World"
+    @test Vector{NSString}(arr2) == arr1
 end
 
 @testset "NSDictionary" begin
