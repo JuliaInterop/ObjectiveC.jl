@@ -65,6 +65,56 @@ NSValue(x::NSRange) = NSValue(@objc [NSValue valueWithRange:x::NSRange]::id{NSVa
 # ...
 
 
+export NSNumber
+
+@objcwrapper NSNumber <: NSObject
+
+@objcproperties NSNumber begin
+    @autoproperty boolValue::Bool
+    @autoproperty charValue::Cchar
+    #@autoproperty decimalValue::id{NSDecimalNumber}
+    @autoproperty doubleValue::Cdouble
+    @autoproperty floatValue::Cfloat
+    @autoproperty intValue::Cint
+    @autoproperty integerValue::NSInteger
+    @autoproperty longValue::Clong
+    @autoproperty longLongValue::Clonglong
+    @autoproperty shortValue::Cshort
+    @autoproperty unsignedCharValue::Cuchar
+    @autoproperty unsignedIntValue::Cuint
+    @autoproperty unsignedIntegerValue::NSUInteger
+    @autoproperty unsignedLongValue::Culong
+    @autoproperty unsignedLongLongValue::Culonglong
+    @autoproperty unsignedShortValue::Cushort
+end
+
+const NSNumberTypes = [
+    Bool => :numberWithBool,
+    Cchar => :numberWithChar,
+    Cdouble => :numberWithDouble,
+    Cfloat => :numberWithFloat,
+    Cint => :numberWithInt,
+    NSInteger => :numberWithInteger,
+    Clong => :numberWithLong,
+    Clonglong => :numberWithLongLong,
+    Cshort => :numberWithShort,
+    Cuint => :numberWithUnsignedInt,
+    NSUInteger => :numberWithUnsignedInteger,
+    Culong => :numberWithUnsignedLong,
+    Culonglong => :numberWithUnsignedLongLong,
+    Cushort => :numberWithUnsignedShort,
+]
+
+let
+  unique_number_types = Set{Type}(map(first, NSNumberTypes))
+  for T in unique_number_types
+    i = findfirst(x->x[1] == T, NSNumberTypes)
+    method = NSNumberTypes[i][2]
+    @eval NSNumber(x::$T) = NSNumber(@objc [NSNumber $method:x::$T]::id{NSNumber})
+  end
+end
+
+
 export NSString
 
 #@objcwrapper NSString <: NSObject

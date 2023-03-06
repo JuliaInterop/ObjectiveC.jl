@@ -106,6 +106,28 @@ end
     @test val4 != val2
 end
 
+@testset "NSNumber" begin
+    @testset "bool" begin
+        t = NSNumber(true)
+        f = NSNumber(false)
+        @test t == t
+        @test t != f
+        @test t.boolValue == true
+        @test f.boolValue == false
+    end
+
+    @testset "int" begin
+        i = NSNumber(123)
+        j = NSNumber(456)
+        @test i == i
+        @test i != j
+        @test i.intValue == 123
+        @test j.intValue == 456
+    end
+end
+
+end
+
 @testset "dispatch" begin
 
 using .Dispatch
