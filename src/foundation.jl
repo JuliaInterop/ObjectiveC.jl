@@ -37,8 +37,14 @@ release(obj::NSObject) = @objc [obj::id{NSObject} release]::Cvoid
 
 retain(obj::NSObject) = @objc [obj::id{NSObject} retain]::Cvoid
 
+ObjectiveC.class(obj::NSObject) = @objc [obj::id{NSObject} class]::Class
+
 function is_kind_of(obj::NSObject, class::Class)
   @objc [obj::id{NSObject} isKindOfClass:class::Class]::Bool
+end
+
+function Base.:(==)(obj1::NSObject, obj2::NSObject)
+  @objc [obj1::id{NSObject} isEqual:obj2::id{NSObject}]::Bool
 end
 
 
