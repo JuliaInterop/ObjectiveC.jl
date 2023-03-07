@@ -1,4 +1,4 @@
-export YES, NO, @sel_str, Selector, Class, class, Object, id, nil
+export YES, NO, @sel_str, Selector, Class, class, Protocol, Object, id, nil
 
 const YES = true
 const NO  = false
@@ -79,6 +79,34 @@ function Base.methods(class::Class)
   Libc.free(meths)
   meths = [ccall(:method_getName, Ptr{Cvoid}, (Ptr{Cvoid},), meth) for meth in meths′]
   return map(meth->selname(meth), meths)
+end
+
+
+# Protocols
+
+struct Protocol
+  ptr::Ptr{Cvoid}
+  Protocol(ptr::Ptr{Cvoid}) = new(ptr)
+end
+
+Base.unsafe_convert(::Type{Ptr{Cvoid}}, proto::Protocol) = proto.ptr
+
+protoptr(name) = ccall(:objc_getProtocol, Ptr{Cvoid}, (Ptr{Cchar},), name)
+
+function Protocol(name)
+  ptr = protoptr(name)
+  ptr == C_NULL && error("Couldn't find proto $name")
+  return Protocol(ptr)
+end
+
+protoexists(name) = protoptr(name) ≠ C_NULL
+
+name(proto::Protocol) =
+  ccall(:protocol_getName, Ptr{Cchar}, (Ptr{Cvoid},),
+            proto) |> unsafe_string |> Symbol
+
+function Base.show(io::IO, proto::Protocol)
+  print(io, name(proto))
 end
 
 
