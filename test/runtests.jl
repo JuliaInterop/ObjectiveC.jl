@@ -37,6 +37,30 @@ end
 
 using .Foundation
 
+@testset "NSBlock" begin
+    function addone(x::T) where T
+        return x + one(T)
+    end
+
+    block = Foundation.@objcblock(addone, Cint, (Cint,))
+
+    # for validation, register our block with a class method
+    # (no need to use @objcwrapper as we're not constructing an id{BlockWrapper})
+    wrapper_class = ObjectiveC.allocclass(:BlockWrapper, Class(:NSObject))
+    imp = ccall(:imp_implementationWithBlock, Ptr{Cvoid}, (id{Foundation.NSBlock},), block)
+    types = (Cint, Object, Selector, Cint)
+    typestr = ObjectiveC.encodetype(types...)
+    @assert ccall(:class_addMethod, Bool,
+                (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cchar}),
+                wrapper_class, sel"invoke:", imp, typestr)
+    ObjectiveC.register(wrapper_class)
+
+    # create a wrapper instance and call our block
+    ptr = @objc [BlockWrapper alloc]::id{Object}
+    ret = @objc [ptr::id{Object} invoke:41::Cint]::Cint
+    @test ret == 42
+end
+
 @testset "NSString" begin
     str = NSString()
     @test is_kind_of(str, Class("NSString"))

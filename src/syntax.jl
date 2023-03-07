@@ -1,4 +1,4 @@
-export @objc, @objcwrapper, @objcproperties
+export @objc, @objcwrapper, @objcproperties, @objcblock
 
 
 # Method Calling

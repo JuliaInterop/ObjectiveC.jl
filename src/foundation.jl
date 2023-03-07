@@ -237,7 +237,6 @@ end
 Dict{K,V}(dict::NSDictionary) where {K,V} = convert(Dict{K,V}, dict)
 
 
-
 export NSError
 
 @objcwrapper NSError <: NSObject
@@ -363,6 +362,100 @@ end
 
 function Base.:(==)(a::NSURL, b::NSURL)
   @objc [a::id{NSURL} isEqual:b::id{NSURL}]::Bool
+end
+
+
+export NSBlock
+
+# @cenum Block_flags::Cint begin
+#     BLOCK_DEALLOCATING      = 0x0001
+#     BLOCK_REFCOUNT_MASK     = 0xfffe
+
+#     BLOCK_IS_NOESCAPE       = 1 << 23
+#     BLOCK_NEEDS_FREE        = 1 << 24
+#     BLOCK_HAS_COPY_DISPOSE  = 1 << 25
+#     BLOCK_HAS_CTOR          = 1 << 26
+#     BLOCK_IS_GLOBAL         = 1 << 28
+#     BLOCK_HAS_STRET         = 1 << 29
+#     BLOCK_HAS_SIGNATURE     = 1 << 30
+# end
+
+const _NSConcreteGlobalBlock = cglobal(:_NSConcreteGlobalBlock)
+const _NSConcreteStackBlock  = cglobal(:_NSConcreteStackBlock)
+
+@objcwrapper NSBlock <: NSObject
+
+function Base.copy(block::NSBlock)
+    @objc [block::id{NSBlock} copy]::id{NSBlock}
+end
+
+
+export @objcblock
+
+struct JuliaBlockDescriptor
+    reserved::Culong
+    size::Culong
+    copy_helper::Ptr{Cvoid}
+    dispose_helper::Ptr{Cvoid}
+end
+
+struct JuliaBlock
+    isa::Ptr{Cvoid}
+    flags::Cint
+    reserved::Cint
+    invoke::Ptr{Cvoid}
+    descriptor::Ptr{JuliaBlockDescriptor}
+
+    # custom fields
+    lambda::Function
+end
+
+# JuliaBlock is the concrete version of NSBlock, so make it possible to derive a regular
+# Objective-C object by temporarily boxing the structure and copying it to the heap.
+function NSBlock(block::JuliaBlock)
+    block_box = Ref(block)
+    GC.@preserve block_box begin
+        block_ptr = Base.unsafe_convert(Ptr{Cvoid}, block_box)
+        nsblock_ptr = reinterpret(id{NSBlock}, block_ptr)
+        copy(NSBlock(nsblock_ptr))
+    end
+end
+
+# static descriptor for a simple Julia-based block
+const julia_block_descriptor = Ref(JuliaBlockDescriptor(0, sizeof(JuliaBlock), 0, C_NULL))
+
+function julia_block_trampoline(_block, _self, args...)
+    block = unsafe_load(_block)
+    nsblock = NSBlock(reinterpret(id{NSBlock}, _block))
+
+    # call the user lambda
+    block.lambda(args...)
+end
+
+macro objcblock(callable, rettyp, argtyps)
+    quote
+        cb = @cfunction($julia_block_trampoline, $(esc(rettyp)),
+                        (Ptr{JuliaBlock}, id{Object}, $(esc(argtyps))...))
+        GC.@preserve cb begin
+            # set-up the block data structures
+            trampoline_ptr = Base.unsafe_convert(Ptr{Cvoid}, cb)
+            desc_ptr = Base.unsafe_convert(Ptr{Cvoid}, $julia_block_descriptor)
+            block = JuliaBlock(_NSConcreteStackBlock, 0, 0, trampoline_ptr, desc_ptr, $(esc(callable)))
+
+            # copy the block to the heap and have Objective-C use that object.
+            # our original block was a plain Julia struct so doesn't need to be released.
+            # we also don't need to worry about the lifetime of the block object, as the
+            # only references to Julia data it contains are the descriptor, which is
+            # statically allocated, and the lambda (Julia code currently isn't GC'd).
+            #
+            # XXX: does nobody need to release the NSBlock copy we created?
+            #      also, we will need to keep track of the cfunction lifetime
+            #      if we want to support closures (or make the user responsible
+            #      by requiring the @cfunction output to be passed to the macro,
+            #      or returning an object that links the NSBlock with the CFunction).
+            NSBlock(block)
+        end
+    end
 end
 
 
