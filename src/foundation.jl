@@ -437,6 +437,17 @@ macro objcblock(callable, rettyp, argtyps)
         cb = @cfunction($julia_block_trampoline, $(esc(rettyp)),
                         (Ptr{JuliaBlock}, id{Object}, $(esc(argtyps))...))
         GC.@preserve cb begin
+            if sizeof($(esc(callable))) > 0
+                error("@objcblock: closures are not yet supported")
+                # closures actually work, however they need to be kept alive. currently,
+                # after deriving a NSBlock pointer, the GC is free to collect the JuliaBlock.
+                # one solution is to return both from this macro (or somehow tieing them
+                # together), however that is cumbersome as it user would then need to keep
+                # the object alive until after the block is called. a better solution is
+                # probably possible by refcounting the block by setting copy/dispose
+                # helpers in the descriptor.
+            end
+
             # set-up the block data structures
             trampoline_ptr = Base.unsafe_convert(Ptr{Cvoid}, cb)
             desc_ptr = Base.unsafe_convert(Ptr{Cvoid}, $julia_block_descriptor)
@@ -449,10 +460,6 @@ macro objcblock(callable, rettyp, argtyps)
             # statically allocated, and the lambda (Julia code currently isn't GC'd).
             #
             # XXX: does nobody need to release the NSBlock copy we created?
-            #      also, we will need to keep track of the cfunction lifetime
-            #      if we want to support closures (or make the user responsible
-            #      by requiring the @cfunction output to be passed to the macro,
-            #      or returning an object that links the NSBlock with the CFunction).
             NSBlock(block)
         end
     end
