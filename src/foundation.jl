@@ -45,6 +45,12 @@ struct NSRange
     length::NSUInteger
 end
 
+Base.cconvert(::Type{NSRange}, r::UnitRange{Int}) = NSRange(first(r), length(r))
+
+Base.first(r::NSRange) = r.location
+Base.last(r::NSRange) = r.location + r.length - 1
+Base.length(r::NSRange) = r.length
+
 
 export NSValue
 
@@ -61,7 +67,7 @@ Base.:(==)(v1::NSValue, v2::NSValue) =
 end
 
 NSValue(x::Ptr) = NSValue(@objc [NSValue valueWithPointer:x::Ptr{Cvoid}]::id{NSValue})
-NSValue(x::NSRange) = NSValue(@objc [NSValue valueWithRange:x::NSRange]::id{NSValue})
+NSValue(x::Union{NSRange,UnitRange}) = NSValue(@objc [NSValue valueWithRange:x::NSRange]::id{NSValue})
 # ...
 
 

@@ -106,6 +106,15 @@ end
     @test val4 != val2
 end
 
+@testset "NSRange" begin
+    # test conversion from UnitRange
+    val1 = UnitRange(2:20)
+    val2 = NSValue(val1)
+    @test first(val1) == first(val2.rangeValue)
+    @test last(val1) == last(val2.rangeValue)
+    @test length(val1) == length(val2.rangeValue)
+end
+
 @testset "NSNumber" begin
     @testset "bool" begin
         t = NSNumber(true)
