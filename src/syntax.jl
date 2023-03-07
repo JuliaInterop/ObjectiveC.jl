@@ -441,8 +441,10 @@ macro objcproperties(typ, ex)
           end
       end
 
-      # finally, call our parent's `getproperty`
-      final = :(invoke(setproperty!, Tuple{supertype($(esc(typ))), Symbol, Any}, object, field))
+      # finally, call our parent's `setproperty!`
+      final = :(invoke(setproperty!,
+                       Tuple{supertype($(esc(typ))), Symbol, Any},
+                       object, field, value))
       if VERSION >= v"1.8"
         push!(current.args, :(@inline $final))
       else
