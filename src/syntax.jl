@@ -364,14 +364,14 @@ macro objcproperties(typ, ex)
             haskey(read_properties, property) && propertyerror("duplicate property $property")
             function_arg = popfirst!(positionals)
             read_properties[property] = quote
-                f = $function_arg
+                f = $(esc(function_arg))
                 f(object)
             end
         elseif cmd == Symbol("@setproperty!")
             haskey(write_properties, property) && propertyerror("duplicate property $property")
             function_arg = popfirst!(positionals)
             write_properties[property] = quote
-                f = $function_arg
+                f = $(esc(function_arg))
                 f(object, value)
             end
         else

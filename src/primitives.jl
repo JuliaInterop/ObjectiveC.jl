@@ -146,5 +146,5 @@ struct UnknownObject <: Object
   ptr::id
   UnknownObject(ptr::id) = new(ptr)
 end
-Base.unsafe_convert(::Type{id}, obj::UnknownObject) = obj.ptr
+Base.unsafe_convert(T::Type{<:id}, obj::UnknownObject) = convert(T, obj.ptr)
 Object(ptr::id) = UnknownObject(ptr)
