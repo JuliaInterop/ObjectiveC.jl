@@ -17,7 +17,7 @@ const NSIntegerMax = typemax(NSInteger)
 const NSUIntegerMax = typemax(NSUInteger)
 
 
-export NSObject, retain, release, description
+export NSObject, retain, release, is_kind_of
 
 @objcwrapper NSObject <: Object
 
@@ -36,6 +36,10 @@ end
 release(obj::NSObject) = @objc [obj::id{NSObject} release]::Cvoid
 
 retain(obj::NSObject) = @objc [obj::id{NSObject} retain]::Cvoid
+
+function is_kind_of(obj::NSObject, class::Class)
+  @objc [obj::id{NSObject} isKindOfClass:class::Class]::Bool
+end
 
 
 export NSRange

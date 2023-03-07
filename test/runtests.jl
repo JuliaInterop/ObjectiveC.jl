@@ -39,6 +39,7 @@ using .Foundation
 
 @testset "NSString" begin
     str = NSString()
+    @test is_kind_of(str, Class("NSString"))
     @test length(str) == 0
     @test String(str) == ""
 
