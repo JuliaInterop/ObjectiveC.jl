@@ -80,6 +80,28 @@ using .Foundation
         ret = @objc [ptr::id{Object} invoke_closure:40::Cint]::Cint
         @test ret == 42
     end
+
+    # async condition
+    let
+        val = Ref(0)
+        cond = Base.AsyncCondition() do async_cond
+            val[] += 1
+            close(async_cond)
+        end
+        block = Foundation.@objcasyncblock(cond)
+
+        types = (Nothing, Object, Selector)
+        typestr = ObjectiveC.encodetype(types...)
+
+        imp = ccall(:imp_implementationWithBlock, Ptr{Cvoid}, (id{Foundation.NSBlock},), block)
+        @assert ccall(:class_addMethod, Bool,
+                      (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cchar}),
+                       wrapper_class, sel"invoke_async_condition", imp, typestr)
+
+        ret = @objc [ptr::id{Object} invoke_async_condition]::Nothing
+        wait(cond)
+        @test val[] == 1
+    end
 end
 
 @testset "NSString" begin
