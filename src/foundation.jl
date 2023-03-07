@@ -351,5 +351,9 @@ function NSFileURL(path::Union{String,NSString})
   NSURL(@objc [NSURL fileURLWithPath:path::id{NSString}]::id{NSURL})
 end
 
+function Base.:(==)(a::NSURL, b::NSURL)
+  @objc [a::id{NSURL} isEqual:b::id{NSURL}]::Bool
+end
+
 
 end
