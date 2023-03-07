@@ -1,6 +1,6 @@
 module ObjectiveC
 
-using Lazy, MacroTools
+using Lazy, MacroTools, CEnum
 
 # Types & Reflection
 int2bool(x::Integer) = x != 0

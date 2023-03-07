@@ -1,6 +1,7 @@
 module Foundation
 
 using ..ObjectiveC
+using ..CEnum
 
 
 export NSInteger, MSIntegerMin, NSIntegerMax, NSUInteger, NSUIntegerMax
@@ -367,18 +368,18 @@ end
 
 export NSBlock
 
-# @cenum Block_flags::Cint begin
-#     BLOCK_DEALLOCATING      = 0x0001
-#     BLOCK_REFCOUNT_MASK     = 0xfffe
+@cenum Block_flags::Cint begin
+    BLOCK_DEALLOCATING      = 0x0001
+    BLOCK_REFCOUNT_MASK     = 0xfffe
 
-#     BLOCK_IS_NOESCAPE       = 1 << 23
-#     BLOCK_NEEDS_FREE        = 1 << 24
-#     BLOCK_HAS_COPY_DISPOSE  = 1 << 25
-#     BLOCK_HAS_CTOR          = 1 << 26
-#     BLOCK_IS_GLOBAL         = 1 << 28
-#     BLOCK_HAS_STRET         = 1 << 29
-#     BLOCK_HAS_SIGNATURE     = 1 << 30
-# end
+    BLOCK_IS_NOESCAPE       = 1 << 23
+    BLOCK_NEEDS_FREE        = 1 << 24
+    BLOCK_HAS_COPY_DISPOSE  = 1 << 25
+    BLOCK_HAS_CTOR          = 1 << 26
+    BLOCK_IS_GLOBAL         = 1 << 28
+    BLOCK_HAS_STRET         = 1 << 29
+    BLOCK_HAS_SIGNATURE     = 1 << 30
+end
 
 const _NSConcreteGlobalBlock = cglobal(:_NSConcreteGlobalBlock)
 const _NSConcreteStackBlock  = cglobal(:_NSConcreteStackBlock)
@@ -410,19 +411,71 @@ struct JuliaBlock
     lambda::Function
 end
 
+# NSBlocks are untracked by the Julia GC, so we need to manually root the Julia objects
+const julia_block_roots = Dict{NSBlock,JuliaBlock}()
+function julia_block_copy(_dst, _src)
+  dst_nsblock = NSBlock(reinterpret(id{NSBlock}, _dst))
+  src_nsblock = NSBlock(reinterpret(id{NSBlock}, _src))
+
+  @assert haskey(julia_block_roots, src_nsblock)
+  julia_block_roots[dst_nsblock] = julia_block_roots[src_nsblock]
+
+  return
+end
+function julia_block_dispose(_block)
+  block = unsafe_load(_block)
+  nsblock = NSBlock(reinterpret(id{NSBlock}, _block))
+
+  @assert haskey(julia_block_roots, nsblock)
+  delete!(julia_block_roots, nsblock)
+
+  return
+end
+
 # JuliaBlock is the concrete version of NSBlock, so make it possible to derive a regular
 # Objective-C object by temporarily boxing the structure and copying it to the heap.
 function NSBlock(block::JuliaBlock)
     block_box = Ref(block)
-    GC.@preserve block_box begin
+    nsblock = GC.@preserve block_box begin
         block_ptr = Base.unsafe_convert(Ptr{Cvoid}, block_box)
         nsblock_ptr = reinterpret(id{NSBlock}, block_ptr)
-        copy(NSBlock(nsblock_ptr))
+
+        # root the temporary Julia object so that the copy handler can find it
+        src_nsblock = NSBlock(nsblock_ptr)
+        julia_block_roots[src_nsblock] = block
+        dst_nsblock = NSBlock(copy(src_nsblock))
+        delete!(julia_block_roots, src_nsblock)
+        dst_nsblock
     end
+
+    # XXX: who is responsible for releasing this block; the user?
+
+    julia_block_roots[nsblock] = block
+    return nsblock
 end
 
-# static descriptor for a simple Julia-based block
-const julia_block_descriptor = Ref(JuliaBlockDescriptor(0, sizeof(JuliaBlock), 0, C_NULL))
+# descriptor and block creation
+const julia_block_descriptor = Ref{JuliaBlockDescriptor}()
+const julia_block_descriptor_initialized = Ref{Bool}(false)
+function JuliaBlock(trampoline, callable)
+    # lazily create a descriptor (these sometimes don't precompile properly)
+    if !julia_block_descriptor_initialized[]
+      # simple cfunctions, so don't need to be rooted
+      copy_cb = @cfunction(julia_block_copy, Nothing, (Ptr{JuliaBlock}, Ptr{JuliaBlock}))
+      dispose_cb = @cfunction(julia_block_dispose, Nothing, (Ptr{JuliaBlock},))
+
+      julia_block_descriptor[] = JuliaBlockDescriptor(0, sizeof(JuliaBlock),
+                                                      copy_cb, dispose_cb)
+      julia_block_descriptor_initialized[] = true
+    end
+
+    # set-up the block data structures
+    desc_ptr = Base.unsafe_convert(Ptr{Cvoid}, julia_block_descriptor)
+    block = JuliaBlock(_NSConcreteStackBlock, BLOCK_HAS_COPY_DISPOSE, 0,
+                        trampoline, desc_ptr, callable)
+
+    return block
+end
 
 function julia_block_trampoline(_block, _self, args...)
     block = unsafe_load(_block)
@@ -434,34 +487,16 @@ end
 
 macro objcblock(callable, rettyp, argtyps)
     quote
-        cb = @cfunction($julia_block_trampoline, $(esc(rettyp)),
-                        (Ptr{JuliaBlock}, id{Object}, $(esc(argtyps))...))
-        GC.@preserve cb begin
-            if sizeof($(esc(callable))) > 0
-                error("@objcblock: closures are not yet supported")
-                # closures actually work, however they need to be kept alive. currently,
-                # after deriving a NSBlock pointer, the GC is free to collect the JuliaBlock.
-                # one solution is to return both from this macro (or somehow tieing them
-                # together), however that is cumbersome as it user would then need to keep
-                # the object alive until after the block is called. a better solution is
-                # probably possible by refcounting the block by setting copy/dispose
-                # helpers in the descriptor.
-            end
+        # create a trampoline to forward all args to the user-provided callable.
+        # this is a simple cfunction, so doesn't need to be rooted.
+        trampoline = @cfunction($julia_block_trampoline, $(esc(rettyp)),
+                                (Ptr{JuliaBlock}, id{Object}, $(esc(argtyps))...))
 
-            # set-up the block data structures
-            trampoline_ptr = Base.unsafe_convert(Ptr{Cvoid}, cb)
-            desc_ptr = Base.unsafe_convert(Ptr{Cvoid}, $julia_block_descriptor)
-            block = JuliaBlock(_NSConcreteStackBlock, 0, 0, trampoline_ptr, desc_ptr, $(esc(callable)))
+        # create an Objective-C block on the stack that wraps the trampoline
+        block = JuliaBlock(trampoline, $(esc(callable)))
 
-            # copy the block to the heap and have Objective-C use that object.
-            # our original block was a plain Julia struct so doesn't need to be released.
-            # we also don't need to worry about the lifetime of the block object, as the
-            # only references to Julia data it contains are the descriptor, which is
-            # statically allocated, and the lambda (Julia code currently isn't GC'd).
-            #
-            # XXX: does nobody need to release the NSBlock copy we created?
-            NSBlock(block)
-        end
+        # convert it to an untracked NSObject on the heap
+        NSBlock(block)
     end
 end
 
