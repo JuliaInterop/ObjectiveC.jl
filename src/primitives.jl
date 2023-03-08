@@ -55,9 +55,7 @@ name(class::Class) =
   ccall(:class_getName, Ptr{Cchar}, (Ptr{Cvoid},),
             class) |> unsafe_string |> Symbol
 
-ismeta(class::Class) =
-  ccall(:class_isMetaClass, Cint, (Ptr{Cvoid},),
-        class) |> int2bool
+ismeta(class::Class) = ccall(:class_isMetaClass, Bool, (Ptr{Cvoid},), class)
 
 function Base.supertype(class::Class)
   ptr = ccall(:class_getSuperclass, Ptr{Cvoid}, (Ptr{Cvoid},),

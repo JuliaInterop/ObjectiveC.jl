@@ -3,7 +3,7 @@ using Test
 
 using ObjectiveC
 
-@testset "@objc" begin
+@testset "@objc macro" begin
     # class methods
     @objc [NSString new]::id{Object}
     data = "test"
@@ -19,9 +19,9 @@ using ObjectiveC
     @objc [obj::id stringByReplacingOccurrencesOfString:empty_str::id{Object} withString:empty_str::id{Object}]::id{Object}
 end
 
-# smoke test
 @objcwrapper TestNSString <: Object
-let data = "test"
+@testset "@objc calls" begin
+    data = "test"
     ptr = @objc [NSString stringWithUTF8String:data::Ptr{UInt8}]::id{TestNSString}
     @test ptr isa id{TestNSString}
     @test class(ptr) isa Class
@@ -33,11 +33,7 @@ let data = "test"
     @test_throws UndefRefError TestNSString(nil)
 end
 
-@testset "foundation" begin
-
-using .Foundation
-
-@testset "NSBlock" begin
+@testset "@objc blocks" begin
     # create a dummy class we'll register our blocks with
     # (no need to use @objcwrapper as we're not constructing an id{BlockWrapper})
     wrapper_class = ObjectiveC.createclass(:BlockWrapper, Class(:NSObject))
@@ -47,11 +43,11 @@ using .Foundation
     types = (Cint, Object, Selector, Cint)
     typestr = ObjectiveC.encodetype(types...)
 
-    # simple function
-    let
+    @testset "simple" begin
         function addone(x::T) where T
             return x + one(T)
         end
+        @assert sizeof(addone) == 0
         block = Foundation.@objcblock(addone, Cint, (Cint,))
 
         imp = ccall(:imp_implementationWithBlock, Ptr{Cvoid}, (id{Foundation.NSBlock},), block)
@@ -64,13 +60,13 @@ using .Foundation
         @test ret == 42
     end
 
-    # closure with captured variable
-    let
+    @testset "closure" begin
         val = Cint(2)
         function addbox(x::T) where T
             return x + val
         end
-        block = Foundation.@objcblock(addbox, Cint, (Cint,))
+        @assert sizeof(addbox) != 0
+        block = @objcblock(addbox, Cint, (Cint,))
 
         imp = ccall(:imp_implementationWithBlock, Ptr{Cvoid}, (id{Foundation.NSBlock},), block)
         @assert ccall(:class_addMethod, Bool,
@@ -81,14 +77,13 @@ using .Foundation
         @test ret == 42
     end
 
-    # async condition
-    let
+    @testset "async" begin
         val = Ref(0)
         cond = Base.AsyncCondition() do async_cond
             val[] += 1
             close(async_cond)
         end
-        block = Foundation.@objcasyncblock(cond)
+        block = @objcasyncblock(cond)
 
         types = (Nothing, Object, Selector)
         typestr = ObjectiveC.encodetype(types...)
@@ -105,6 +100,10 @@ using .Foundation
         end()
     end
 end
+
+@testset "foundation" begin
+
+using .Foundation
 
 @testset "NSString" begin
     str = NSString()
