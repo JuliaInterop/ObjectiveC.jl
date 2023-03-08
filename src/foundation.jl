@@ -381,8 +381,8 @@ export NSBlock
     BLOCK_HAS_SIGNATURE     = 1 << 30
 end
 
-const NSConcreteGlobalBlock = cglobal(:_NSConcreteGlobalBlock)
-const NSConcreteStackBlock  = cglobal(:_NSConcreteStackBlock)
+NSConcreteGlobalBlock() = cglobal(:_NSConcreteGlobalBlock)
+NSConcreteStackBlock()  = cglobal(:_NSConcreteStackBlock)
 
 @objcwrapper NSBlock <: NSObject
 

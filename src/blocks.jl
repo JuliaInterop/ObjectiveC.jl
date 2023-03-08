@@ -89,8 +89,8 @@ function JuliaBlock(trampoline, callable)
 
     # set-up the block data structures
     desc_ptr = Base.unsafe_convert(Ptr{Cvoid}, julia_block_descriptor)
-    block = JuliaBlock(Foundation.NSConcreteStackBlock, Foundation.BLOCK_HAS_COPY_DISPOSE, 0,
-                       trampoline, desc_ptr, callable)
+    block = JuliaBlock(Foundation.NSConcreteStackBlock(), Foundation.BLOCK_HAS_COPY_DISPOSE,
+                       0, trampoline, desc_ptr, callable)
 
     return block
 end
@@ -195,7 +195,7 @@ function JuliaAsyncBlock(cond)
 
     # set-up the block data structures
     desc_ptr = Base.unsafe_convert(Ptr{Cvoid}, julia_async_block_descriptor)
-    block = JuliaAsyncBlock(Foundation.NSConcreteStackBlock, 0, 0,
+    block = JuliaAsyncBlock(Foundation.NSConcreteStackBlock(), 0, 0,
                             trampoline, desc_ptr, cglobal(:uv_async_send), cond.handle)
     # the condition is kept alive by the Julia scheduler, so we don't need to do anything
 
