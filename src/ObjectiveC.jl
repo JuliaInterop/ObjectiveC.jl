@@ -1,6 +1,6 @@
 module ObjectiveC
 
-using Lazy, MacroTools, CEnum
+using CEnum
 
 # Types & Reflection
 include("primitives.jl")

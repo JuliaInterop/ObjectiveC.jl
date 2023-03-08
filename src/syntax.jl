@@ -8,10 +8,10 @@ callerror(msg) = error("""ObjectiveC call: $msg
 
 # convert a vcat to a hcat so that we can split the @objc expressions into multiple lines
 function flatvcat(ex::Expr)
-  any(ex->isexpr(ex, :row), ex.args) || return ex
+  any(ex->Meta.isexpr(ex, :row), ex.args) || return ex
   flat = Expr(:hcat)
   for row in ex.args
-    isexpr(row, :row) ?
+    Meta.isexpr(row, :row) ?
       push!(flat.args, row.args...) :
       push!(flat.args, row)
   end
