@@ -1,3 +1,11 @@
+# macros for creating Objective-C blocks from Julia callables.
+#
+# related links:
+#  - LLVM/Clang: https://clang.llvm.org/docs/Block-ABI-Apple.html
+#                https://github.com/llvm/llvm-project/blob/33912468a7dbd2cdef3648878ccd6b8f99e0b5bf/compiler-rt/lib/BlocksRuntime/Block_private.h
+#  - Rust: https://crates.io/crates/block
+#  - Lua: https://github.com/rweichler/objc.lua/blob/cbe2a80462fdcc270c37482f648135de079040e7/src/init.lua#L1996-L2070
+
 using .Foundation
 
 
