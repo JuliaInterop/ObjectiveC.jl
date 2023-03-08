@@ -99,8 +99,10 @@ using .Foundation
                        wrapper_class, sel"invoke_async_condition", imp, typestr)
 
         ret = @objc [ptr::id{Object} invoke_async_condition]::Nothing
-        wait(cond)
-        @test val[] == 1
+        retry(; delays=[0, 0.1, 1]) do
+            # XXX: is there another wait? `wait(cond)` doesn't seem to work on 1.6
+            val[] == 1 || error("val[] = $(val[])")
+        end()
     end
 end
 
