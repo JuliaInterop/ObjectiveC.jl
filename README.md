@@ -1,65 +1,182 @@
 # ObjectiveC.jl
 
+*Objective-C bridge for Julia*
+
+
+## Quick start
+
+ObjectiveC.jl is a registered package, so you can install it using the package manager:
+
 ```julia
-Pkg.clone("ObjectiveC")
+Pkg.add("ObjectiveC")
 ```
 
-ObjectiveC.jl is an Objective-C bridge for Julia. The library allows you to call Objective-C methods using native syntax:
+The library allows you to call Objective-C methods using almost-native syntax:
 
 ```julia
-using ObjectiveC
+julia> using ObjectiveC
 
-@objc [NSString new]
+julia> @objc [NSString new]::id{Object}
+id{Object}(0x00006000008a4760)
 ```
 
-This makes it easy to wrap Objective-C APIs from Julia.
+For performance reasons, ObjectiveC.jl requires you to specify the type of the call and
+any arguments using Julia type-assertion syntax (`::id{Object}` in the example above).
+
+Although it is possible to build Julia APIs around this functionality, manually keeping
+track of `id` pointers, it is possible to have ObjectiveC.jl do this for you:
 
 ```julia
-using ObjectiveC
+julia> @objcwrapper NSValue
 
-@classes NSSound
+julia> obj_ptr = @objc [NSValue valueWithPointer:C_NULL::Ptr{Cvoid}]::id{NSValue}
+id{NSValue}(0x00006000023cfca0)
 
-function play(name::String)
-  @objc begin
-    sound = [NSSound soundNamed:name]
-    if [sound isPlaying] |> bool
-      [sound stop]
-    end
-    [sound play]
+julia> obj = NSValue(obj_ptr)
+NSValueInstance (object of type NSConcreteValue)
+```
+
+The generated `NSValue` class is an abstract type that implements the type hierarchy, while
+the `NSValueInstance` object is a concrete structure that houses the `id` pointer. This
+split makes it possible to implement multi-level inheritance and attach functionality at
+each level of the hierarchy, and should be entirely transparent to the user (i.e., you
+should never need to use the `*Instance` types in code or signatures).
+
+The `@objcwrapper` macro also generates conversion routines and accessors that makes it
+possible to use these objects directly with `@objc` calls that require `id` pointers:
+
+```julia
+julia> get_pointer(val::NSValue) = @objc [val::id{NSValue} pointerValue]::Ptr{Cvoid}
+
+julia> get_pointer(obj)
+Ptr{Nothing} @0x0000000000000000
+```
+
+
+## Properties
+
+A common pattern in Objective-C is to use properties to acces instance variables. Although
+it is possible to access these directly using `@objc`, ObjectiveC.jl provides a macro to
+automatically generate the appropriate `getproperty`, `setproperty!` and `propertynames`
+definitions:
+
+```julia
+julia> @objcproperties NSValue begin
+         @autoproperty pointerValue::Ptr{Cvoid}
+       end
+
+julia> obj.pointerValue
+Ptr{Nothing} @0x0000000000000000
+```
+
+The behavior of `@objcproperties` can be customized by passing keyword arguments to the
+property macros:
+
+```julia
+@objcproperties SomeObject begin
+  # simplest definition: just generate a getter,
+  # and convert the property value to `DstTyp`
+  @autoproperty someProperty::DstTyp
+
+  # also generate a setter
+  @autoproperty someProperty::DstTyp setter=setSomeProperty
+
+  # if the property is an ObjC object, use an object pointer type.
+  # this will make sure to do a nil check and return nothing,
+  # or convert the pointer to an instance of the specified type
+  @autoproperty someProperty::id{DstTyp}
+
+  # sometimes you may want to convert to a different type
+  @autoproperty someStringProperty::id{NSString} typ=String
+
+  # and finally, if more control is needed, just do it yourselv:
+  @getproperty someComplexProperty function(obj)
+    # do something with obj
+    # return a value
+  end
+  @setproperty! someComplexProperty function(obj, val)
+    # do something with obj and val
+    # return nothing
   end
 end
-
-play("Purr")
 ```
 
-ObjectiveC.jl also supports defining classes, using a variant of Objective-C
-syntax (which eschews the interface/implementation distinction):
+
+## Blocks
+
+Julia callables can be converted to Objective-C blocks using the `@objcblock` macro:
 
 ```julia
-@class type Foo
-  @- (Cdouble) multiply:(Cdouble)x by:(Cdouble)y begin
-    x*y # Note that this is Julia code
-  end
-end
-
-@objc [[Foo new] multiply:5 by:3]
-#> 15
+julia> function hello(x)
+         println("Hello, $x!")
+         x+1
+       end
+julia> block = @objcblock(hello, Cint, (Cint,))
 ```
 
-You can leave out the type to default to `Object`. So long as you don't change
-the type of the method, you're able to redefine it on the fly – even if you've
-already created instances of the class and used them as delegates.
+This object can now be passed to Objective-C methods that take blocks as arguments. Note
+that before Julia 1.9, blocks should only ever be called from Julia-managed threads, or else
+your application will crash.
 
-## Current Limitations
+If you need to use blocks that may be called from unrelated threads on Julia 1.8 or earlier,
+you can use the `@objasyncblock` macro instead. This variant takes an `AsyncCondition` that
+will be executed on the libuv event loop after the block has been called. Note that there
+may be some time between the block being called and the condition being executed, and libuv
+may decide to coalesce multiple conditions into a single execution, so it is preferred to
+use `@objcblock` whenever possible. It is also not possible to pass any arguments to the
+condition, but you can use a closure to capture any state you need:
 
-  * Julia's FFI doesn't have great support for structs yet, so neither does
-    ObjectiveC.jl. Luckily structs aren't too common in Objective-C APIs, and
-    where they are used it's not too difficult to add wrappers (see
-    [cocoa.m](deps/cocoa.m))
-  * Objective-C calls made from Julia are not as fast as they could be. This
-    is fine for most GUI-related purposes, since most calls will be callbacks
-    made by the Objective-C runtime, but may not be suitable for use with
-    high-performance scientific computing libraries written in Objective-C.
-  * Instance variables are not yet supported on classes.
-  * Probably other things I haven't thought of; ObjectiveC.jl has not been used
-    for any remotely large projects yet so proceed with caution.
+```julia
+julia> counter = 0
+julia> cond = Base.AsyncCondition() do async_cond
+          counter += 1
+        end
+julia> block = @objcasyncblock(cond)
+```
+
+
+## API wrappers
+
+ObjectiveC.jl also provides ready-made wrappers for essential frameworks like Foundation:
+
+```julia
+julia> using .Foundation
+
+
+julia> str = NSString("test")
+NSString("test")
+
+
+julia> NSArray([str, str])
+(
+    test,
+    test
+)
+
+
+julia> d = NSDictionary(Dict(str=>str))
+{
+    test = test;
+}
+
+julia> d[str]
+id{Object}(0x836f2afbc3a7b349)
+
+julia> Dict{NSString,NSString}(d)
+Dict{NSString, NSString} with 1 entry:
+  "test" => "test"
+```
+
+
+## Current status
+
+ObjectiveC.jl has recently been revamped, and is still under heavy development. Do not
+assume its APIs are stable until version 1.0 is released. That said, it is being used
+as the main FFI for [Metal.jl](https://github.com/JuliaGPU/Metal.jl), so you can expect
+the existing functionality to be fairly solid.
+
+In the process of revamping the package, some functionality was lost, including the ability
+to define Objective-C classes using native-like syntax. If you are interested, please take a
+look at the repository [before the
+revamp](https://github.com/JuliaInterop/ObjectiveC.jl/tree/22118319da1fb7601d2a3ecefb671ffbb5e57012)
+and consider contributing a PR to bring it back.
