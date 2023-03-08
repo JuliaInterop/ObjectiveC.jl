@@ -1,31 +1,21 @@
 module ObjectiveC
 
-using Lazy, MacroTools
+using CEnum
 
 # Types & Reflection
-
-import Base: show, convert, unsafe_convert, super, methods
-export @sel_str, signature
-
-int2bool(x::Integer) = x != 0
-
 include("primitives.jl")
 include("methods.jl")
 
-# Calling Machinery
-
-export @objc, @classes
-
-include("call.jl")
+# Calls & Properties
 include("syntax.jl")
-
-# Class Creation
-
-include("classes.jl")
 
 # API wrappers
 include("foundation.jl")
+include("dispatch.jl")
+export Foundation, Dispatch
+
+# High-level functionality
+include("classes.jl")
+include("blocks.jl")
 
 end
-
-# include("cocoa/cocoa.jl")

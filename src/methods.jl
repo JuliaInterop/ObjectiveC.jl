@@ -1,15 +1,17 @@
+export signature
+
 method(class::Class, sel::Selector) =
-  ccall(:class_getInstanceMethod, Ptr{Void}, (Ptr{Void}, Ptr{Void}),
+  ccall(:class_getInstanceMethod, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}),
         class, sel)
 
 method(obj::Object, sel::Selector) =
   method(class(obj), sel)
 
 types(m::Ptr) =
-  ccall(:method_getTypeEncoding, Ptr{Cchar}, (Ptr{Void},), m) |> bytestring
+  ccall(:method_getTypeEncoding, Ptr{Cchar}, (Ptr{Cvoid},), m) |> unsafe_string
 
 implementation(m::Ptr) =
-  ccall(:method_getImplementation, Ptr{Void}, (Ptr{Void},),
+  ccall(:method_getImplementation, Ptr{Cvoid}, (Ptr{Cvoid},),
         m)
 
 # From https://developer.apple.com/library/mac/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtTypeEncodings.html
@@ -26,7 +28,7 @@ const typeencodings = Dict('c' => Cchar,
                            'f' => Cfloat,
                            'd' => Cdouble,
                            'B' => Bool,
-                           'v' => Void,
+                           'v' => Cvoid,
                            '*' => Ptr{Cchar},
                            '@' => Object,
                            '#' => Class,
@@ -48,14 +50,14 @@ const skip = Set(['r', 'V',
 function nexttype(io::IO)
   c = read(io, Char)
   c in skip && return
-  haskey(typeencodings, c) || error("Unsupported method type: $(takebuf_string(io))")
+  haskey(typeencodings, c) || error("Unsupported method type: $(String(take!(io)))")
   t = typeencodings[c]
   t == Ptr && (t = Ptr{nexttype(io)})
   return t
 end
 
 function parseencoding(io::IO)
-  types = c()
+  types = DataType[]
   while !eof(io)
     t = nexttype(io)
     t == nothing || push!(types, t)
@@ -78,7 +80,7 @@ signature(obj::Object, sel::Selector) =
 
 # Creating Methods
 
-const revtypeencodings = [v => k for (k, v) in typeencodings]
+const revtypeencodings = Dict(v => k for (k, v) in typeencodings)
 
 function encodetype(ts...)
   buf = IOBuffer()
@@ -87,5 +89,5 @@ function encodetype(ts...)
     haskey(revtypeencodings, t) || error("$t isn't a valid ObjectiveC type")
     print(buf, revtypeencodings[t])
   end
-  return takebuf_string(buf)
+  return String(take!(buf))
 end
