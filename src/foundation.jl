@@ -535,7 +535,7 @@ struct JuliaAsyncBlock
 
     # custom fields
     async_send::Ptr{Cvoid}
-    cond::Base.AsyncCondition
+    cond_handle::Ptr{Cvoid}
 end
 
 # async conditions are kept alive by the Julia scheduler, so we don't need to do anything
@@ -550,9 +550,12 @@ function Foundation.NSBlock(block::JuliaAsyncBlock)
     end
 end
 
-function julia_async_block_trampoline(_block, _self, args...)
+function julia_async_block_trampoline(_block, _self)
     block = unsafe_load(_block)
-    ccall(block.async_send, Cint, (Ptr{Cvoid},), block.cond)
+    # note that this requires the JuliaAsyncBlock structure to be immutable without any
+    # contained mutable references (i.e. no AsyncCondition), or the load would allocate.
+
+    ccall(block.async_send, Cint, (Ptr{Cvoid},), block.cond_handle)
     return
 end
 
@@ -575,9 +578,8 @@ function JuliaAsyncBlock(cond)
     # set-up the block data structures
     desc_ptr = Base.unsafe_convert(Ptr{Cvoid}, julia_async_block_descriptor)
     block = JuliaAsyncBlock(_NSConcreteStackBlock, 0, 0,
-                            trampoline, desc_ptr, cglobal(:uv_async_send), cond)
-
-    # XXX: invoke shouldn't be trampoline directly, but
+                            trampoline, desc_ptr, cglobal(:uv_async_send), cond.handle)
+    # the condition is kept alive by the Julia scheduler, so we don't need to do anything
 
     return block
 end
