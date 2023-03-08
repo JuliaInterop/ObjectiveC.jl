@@ -1,6 +1,9 @@
 The ObjectiveC.jl package is licensed under the MIT "Expat" License:
 
-> Copyright (c) 2014: Mike Innes, Julia Computing & contributors.
+> Copyright (c) 2023-present: JuliaHub and other contributors
+>
+> Copyright (c) 2014-2015: Mike Innes, Julia Computing & contributors.
+> 
 >
 > Permission is hereby granted, free of charge, to any person obtaining
 > a copy of this software and associated documentation files (the
