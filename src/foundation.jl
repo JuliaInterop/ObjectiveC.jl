@@ -175,7 +175,7 @@ end
 NSArray() = NSArray(@objc [NSArray array]::id{NSArray})
 
 function NSArray(elements::Vector)
-    arr = @objc [NSArray arrayWithObjects:elements::Ptr{id}
+    arr = @objc [NSArray arrayWithObjects:elements::Ptr{id{Object}}
                                     count:length(elements)::NSUInteger]::id{NSArray}
     return NSArray(arr)
 end

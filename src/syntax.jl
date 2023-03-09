@@ -90,12 +90,11 @@ function objcm(ex)
             # possibly dealing with a nested expression, so recurse
             quote
                 obj = $(objcm(obj))
-                $(instance_message(:obj, sel, rettyp, argtyps, argvals))
+                $(instance_message(:obj, esc(typ), sel, rettyp, argtyps, argvals))
             end
         else
-            instance_message(esc(value), sel, rettyp, argtyps, argvals)
+            instance_message(esc(value), esc(typ), sel, rettyp, argtyps, argvals)
         end
-        # XXX: do something with the instance type?
     else
         callerror("object must be a class or typed instance")
     end
@@ -103,22 +102,75 @@ function objcm(ex)
     return ex
 end
 
+# argument renderers, for tracing functionality
+render(io, obj) = Core.print(io, repr(obj))
+function render(io, ptr::id{T}) where T
+  Core.print(io, "(id<", String(T.name.name), ">)0x", string(UInt(ptr), base=16, pad = Sys.WORD_SIZE>>2))
+end
+function render(io, ptr::Ptr{T}) where T
+  Core.print(io, "(", String(T.name.name), "*)0x", string(UInt(ptr), base=16, pad = Sys.WORD_SIZE>>2))
+end
+## mimic ccall's conversion
+function render_c_arg(io, obj, typ)
+  GC.@preserve obj begin
+    ptr = Base.unsafe_convert(typ, Base.cconvert(typ, obj))
+    render(io, ptr)
+  end
+end
+
 function class_message(class_name, msg, rettyp, argtyps, argvals)
     quote
         class = Class($(String(class_name)))
         sel = Selector($(String(msg)))
-        ccall(:objc_msgSend, $(esc(rettyp)),
-              (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-              class, sel, $(map(esc, argvals)...))
+        @static if $tracing
+            io = Core.stderr
+            Core.print(io, "+ [", $(String(class_name)), " ", $(String(msg)))
+            for (arg, typ) in zip([$(map(esc, argvals)...)], [$(map(esc, argtyps)...)])
+                Core.print(io, " ")
+                render_c_arg(io, arg, typ)
+            end
+            Core.println(io, "]")
+        end
+        ret = ccall(:objc_msgSend, $(esc(rettyp)),
+                    (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+                    class, sel, $(map(esc, argvals)...))
+        @static if $tracing
+            if $(esc(rettyp)) !== Nothing
+              Core.print(io, "  ")
+              render(io, ret)
+              Core.println(io)
+            end
+        end
+        ret
     end
 end
 
-function instance_message(instance, msg, rettyp, argtyps, argvals)
+function instance_message(instance, typ, msg, rettyp, argtyps, argvals)
+    # TODO: use the instance type `typ` to verify when in validation mode?
     quote
         sel = Selector($(String(msg)))
-        ccall(:objc_msgSend, $(esc(rettyp)),
-              (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-              $instance, sel, $(map(esc, argvals)...))
+        @static if $tracing
+            io = Core.stderr
+            Core.print(io, "- [")
+            render_c_arg(io, $instance, $typ)
+            Core.print(io, " ", $(String(msg)))
+            for (arg, typ) in zip([$(map(esc, argvals)...)], [$(map(esc, argtyps)...)])
+                Core.print(io, " ")
+                render_c_arg(io, arg, typ)
+            end
+            Core.println(io, "]")
+        end
+        ret = ccall(:objc_msgSend, $(esc(rettyp)),
+                    (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+                    $instance, sel, $(map(esc, argvals)...))
+        @static if $tracing
+            if $(esc(rettyp)) !== Nothing
+              Core.print(io, "  ")
+              render(io, ret)
+              Core.println(io)
+            end
+        end
+        ret
     end
 end
 

@@ -242,3 +242,23 @@ using .Dispatch
 end
 
 end
+
+@testset "tracing" begin
+    ObjectiveC.enable_tracing(true)
+    cmd = ```$(Base.julia_cmd()) --project=$(Base.active_project())
+                                 --eval "using ObjectiveC, .Foundation; String(NSString())"```
+
+    out = Pipe()
+    err = Pipe()
+    proc = run(pipeline(cmd, stdout=out, stderr=err), wait=false)
+    close(out.in)
+    close(err.in)
+    wait(proc)
+    out = read(out, String)
+    err = read(err, String)
+
+    @test success(proc)
+    @test isempty(out)
+    @test contains(err, "+ [NSString string]")
+    @test contains(err, r"- \[.+ UTF8String\]")
+end

@@ -137,6 +137,10 @@ function Base.convert(::Type{id{T}}, x::id{U}) where {T,U}
   Base.bitcast(id{T}, x)
 end
 
+# conversion to integer
+Base.Int(x::id)  = Base.bitcast(Int, x)
+Base.UInt(x::id) = Base.bitcast(UInt, x)
+
 # `reinterpret` can be used to force conversion, typically from untyped `id{Object}`
 Base.reinterpret(::Type{id{T}}, x::id) where {T} = Base.bitcast(id{T}, x)
 

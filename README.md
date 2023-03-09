@@ -176,6 +176,34 @@ Dict{NSString, NSString} with 1 entry:
 ```
 
 
+## Debugging
+
+To see what ObjectiveC.jl is doing under the hood, you can toggle the `tracing` preference,
+which will make the package print out the Objective-C calls it makes:
+
+```julia
+julia> using ObjectiveC
+julia> ObjectiveC.enable_tracing(true)
+[ Info: ObjectiveC.jl tracing setting changed; restart your Julia session for this change to take effect!
+
+# restart Julia
+
+julia> using ObjectiveC
+
+julia> str = NSString("test");
++ [NSString stringWithUTF8String: (Int8*)0x000000010dc65428]
+  (id<NSString>)0x983d4f92876ccd8c
+
+julia> String(str)
+- [(id<NSString>)0x983d4f92876ccd8c UTF8String]
+  (Int8*)0x000060000376d6a8
+"test"
+```
+
+This can be useful for submitting bug reports to upstream projects which may not be
+familiar with Julia.
+
+
 ## Current status
 
 ObjectiveC.jl has recently been revamped, and is still under heavy development. Do not
