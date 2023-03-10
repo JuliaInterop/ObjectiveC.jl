@@ -33,7 +33,6 @@ int main(int argc, const char * argv[]) {
     auto fin = high_resolution_clock::now();
     cout << "Lookup by name: " << duration_cast<microseconds>(fin-start).count() << "us total, "
          << duration_cast<nanoseconds>((fin-start)/numClasses).count() << "ns per class" << endl;
-
     return 0;
 
 }

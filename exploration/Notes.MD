@@ -8,7 +8,7 @@ Rationale
 This `exploration` folder exists for the following reasons:
 - Every few years I need to revisit Objective-C, I relearn a bunch of details, and then forget.  
 - Same for Julia
-- I will quasi-document my attempt to sort of a bunch of somewhat orthogonal but possibly not topics via notebooks and scripts
+- I will quasi-document my attempt to sort out a bunch of somewhat orthogonal, but possibly not topics, via notebooks and scripts
 
 
 Topics to Explore
@@ -22,7 +22,7 @@ Topics to Explore
         - Edge cases
     - Performance costs
         - resolving Classes, Selectors, and Protocols
-        - checj if an NSObject responds to a Selector or conforms to a protocol 
+        - check if an NSObject responds to a Selector or conforms to a protocol 
     - ObjC runtime debugging 
         - via ENV vars
         - via `xctrace record` with canned templates
