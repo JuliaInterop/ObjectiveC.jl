@@ -9,13 +9,13 @@ using namespace std::chrono;
 
 int main(int argc, const char * argv[]) {
     auto numClasses = objc_getClassList(nullptr, 0);
-    Class * classes = static_cast<Class *>(malloc(sizeof(Class) * numClasses));
+    auto classes = static_cast<Class *>(malloc(sizeof(Class) * numClasses));
 
     numClasses = objc_getClassList(classes, numClasses);
 
     auto names = vector<const char *>(numClasses);
 
-    for (int i = 0; i < numClasses; ++i) {
+    for (auto i = 0; i < numClasses; ++i) {
         Class cls = classes[i];
         const char *name = class_getName(cls);
         cout << setw(40) << name << ": " << class_getImageName(cls) << endl;
