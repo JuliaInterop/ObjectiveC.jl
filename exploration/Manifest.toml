@@ -2,7 +2,7 @@
 
 julia_version = "1.8.5"
 manifest_format = "2.0"
-project_hash = "76a1b799376ae436660312b5299cab607b510882"
+project_hash = "63cc74fa269108dc6e1e63eb7ec279007705d5ad"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -34,6 +34,18 @@ version = "0.4.2"
 git-tree-sha1 = "8c4920235f6c561e401dfe569beb8b924adad003"
 uuid = "8be319e6-bccf-4806-a6f7-6fae938471bc"
 version = "0.5.0"
+
+[[deps.Clang]]
+deps = ["CEnum", "Clang_jll", "Downloads", "Pkg", "TOML"]
+path = "dev/Clang"
+uuid = "40e3b903-d033-50b4-a0cc-940c62c95e31"
+version = "0.17.3"
+
+[[deps.Clang_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "Zlib_jll", "libLLVM_jll"]
+git-tree-sha1 = "0dfffba1b32bb3e30cb0372bfe666a5ddffe37fb"
+uuid = "0ee61d77-7f21-5576-8119-9fcc46b10100"
+version = "13.0.1+3"
 
 [[deps.CodeTracking]]
 deps = ["InteractiveUtils", "UUIDs"]
@@ -585,6 +597,11 @@ version = "4.3.4+0"
 deps = ["Libdl"]
 uuid = "83775a58-1f1d-513f-b197-d71354ab007a"
 version = "1.2.12+3"
+
+[[deps.libLLVM_jll]]
+deps = ["Artifacts", "Libdl"]
+uuid = "8f36deef-c2a5-5394-99ed-8e07531fb29a"
+version = "13.0.1+3"
 
 [[deps.libblastrampoline_jll]]
 deps = ["Artifacts", "Libdl", "OpenBLAS_jll"]
