@@ -4,3 +4,5 @@ cmake-build-*/
 dev/
 LocalPreferences.toml
 libclang-*
+*.pch
+cache/
