@@ -1,5 +1,6 @@
 Short Term Fluff
 ===================
+- Clang_jl rename to get_file, get_unique_id, normpath
 - Analyze Foundation
   - types of cursors
   - File
@@ -13,7 +14,7 @@ Tedius
 Medium
 ==============
 - modulemap parser
-- Module dependecy graph
+- Module dependency graph
 - List system modules
 
 Finally
