@@ -28,10 +28,15 @@ export NSObject, retain, release, is_kind_of
 @objcproperties NSObject begin
     @autoproperty hash::NSUInteger
     @autoproperty description::id{NSString}
+    @autoproperty debugDescription::id{NSString}
 end
 
 function Base.show(io::IO, ::MIME"text/plain", obj::NSObject)
-  print(io, String(obj.description))
+  if get(io, :compact, false)
+    print(io, String(obj.description))
+  else
+    print(io, String(obj.debugDescription))
+  end
 end
 
 release(obj::NSObject) = @objc [obj::id{NSObject} release]::Cvoid
