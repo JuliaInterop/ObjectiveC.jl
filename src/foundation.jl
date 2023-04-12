@@ -32,7 +32,11 @@ export NSObject, retain, release, is_kind_of
 end
 
 function Base.show(io::IO, ::MIME"text/plain", obj::NSObject)
-  print(io, String(obj.debugDescription))
+  if get(io, :compact, false)
+    print(io, String(obj.description))
+  else
+    print(io, String(obj.debugDescription))
+  end
 end
 
 release(obj::NSObject) = @objc [obj::id{NSObject} release]::Cvoid
