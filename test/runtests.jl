@@ -243,6 +243,22 @@ end
 
 end
 
+@testset "core foundation" begin
+
+using .CoreFoundation
+
+@testset "run loop" begin
+    loop = current_loop()
+    @test loop == main_loop()
+    wake_loop(loop)
+    stop_loop(loop)
+    @test loop_waiting(loop) == false
+
+    @test run_loop(0.1) == CoreFoundation.RunLoopRunTimedOut
+end
+
+end
+
 @testset "tracing" begin
     ObjectiveC.enable_tracing(true)
     cmd = ```$(Base.julia_cmd()) --project=$(Base.active_project())
