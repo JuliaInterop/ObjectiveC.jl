@@ -471,6 +471,7 @@ macro objcproperties(typ, ex)
         push!(current.args, :($final))
       end
       getproperties_ex = quote
+          # XXX: force const-prop on field, without inlining everything?
           function Base.getproperty(object::$(esc(typ)), field::Symbol)
             $getproperties_ex
           end
@@ -503,6 +504,7 @@ macro objcproperties(typ, ex)
         push!(current.args, :($final))
       end
       setproperties_ex = quote
+          # XXX: force const-prop on field, without inlining everything?
           function Base.setproperty!(object::$(esc(typ)), field::Symbol, value::Any)
             $setproperties_ex
           end

@@ -247,6 +247,12 @@ end
 
 using .CoreFoundation
 
+@testset "strings" begin
+    str = CFString("foobar")
+    @test String(str) == "foobar"
+    @test sprint(show, str) == "CFString(\"foobar\")"
+end
+
 @testset "run loop" begin
     loop = current_loop()
     @test loop == main_loop()
@@ -255,6 +261,66 @@ using .CoreFoundation
     @test loop_waiting(loop) == false
 
     @test run_loop(0.1) == CoreFoundation.RunLoopRunTimedOut
+end
+
+
+@testset "notifications" begin
+    center = darwin_notify_center()
+
+    foo_calls = 0
+    bar_calls = 0
+    foobar_calls = 0
+    foo_observer = CFNotificationObserver() do center, name, object, info
+        foo_calls += 1
+    end
+    bar_observer = CFNotificationObserver() do center, name, object, info
+        bar_calls += 1
+    end
+    foobar_observer = CFNotificationObserver() do center, name, object, info
+        foobar_calls += 1
+    end
+
+    try
+        add_observer!(center, foo_observer; name="foo")
+        add_observer!(center, foobar_observer; name="foo")
+        add_observer!(center, bar_observer; name="bar")
+        add_observer!(center, foobar_observer; name="bar")
+
+        post_notification!(center, "foo")
+        run_loop(0.5; return_after_source_handled=true)
+        @test foo_calls == 1
+        @test foobar_calls == 1
+
+        post_notification!(center, "bar")
+        run_loop(0.5; return_after_source_handled=true)
+        @test bar_calls == 1
+        @test foobar_calls == 2
+
+        # test unsubscribing from a specific notification
+        remove_observer!(center, foobar_observer; name="foo")
+
+        post_notification!(center, "foo")
+        run_loop(0.5; return_after_source_handled=true)
+        @test foo_calls == 2
+        @test foobar_calls == 2
+
+        post_notification!(center, "bar")
+        run_loop(0.5; return_after_source_handled=true)
+        @test bar_calls == 2
+        @test foobar_calls == 3
+
+        # test unsubscribing from all notifications
+        remove_observer!(center, foobar_observer)
+
+        post_notification!(center, "bar")
+        run_loop(0.5; return_after_source_handled=true)
+        @test bar_calls == 3
+        @test foobar_calls == 3
+    finally
+        remove_observer!(center, foo_observer)
+        remove_observer!(center, bar_observer)
+        remove_observer!(center, foobar_observer)
+    end
 end
 
 end
