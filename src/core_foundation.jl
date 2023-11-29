@@ -32,7 +32,7 @@ end
 # CFAllocator
 
 export CFAllocator, default_allocator, system_default_allocator,
-       malloc_allocator, malloc_zone_allocator,
+       malloc_allocator, malloc_zone_allocator, null_allocator,
        allocate!, reallocate!, deallocate!, preferred_size
 
 struct __CFAllocator end
@@ -74,7 +74,7 @@ function deallocate!(allocator::CFAllocator, ptr)
 end
 
 function preferred_size(allocator::CFAllocator, size, hint=0)
-    @ccall CFAllocatorPreferredSizeForSize(
+    @ccall CFAllocatorGetPreferredSizeForSize(
         allocator::CFAllocatorRef,
         size::CFIndex,
         hint::CFOptionFlags

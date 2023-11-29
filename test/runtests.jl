@@ -247,8 +247,26 @@ end
 
 using .CoreFoundation
 
+@testset "allocator" begin
+    allocator = default_allocator()
+
+    size = 100
+    @test preferred_size(allocator, size) >= size
+    mem = allocate!(allocator, size)
+    mem = reallocate!(allocator, mem, size*2)
+    deallocate!(allocator, mem)
+
+    # other allocators aren't directly usable, but do test their constructors
+    @test system_default_allocator() !== nothing
+    @test malloc_allocator() !== nothing
+    @test malloc_zone_allocator() !== nothing
+    @test null_allocator() !== nothing
+end
+
 @testset "strings" begin
     str = CFString("foobar")
+    @test str[1] == 'f'
+    @test length(str) == 6
     @test String(str) == "foobar"
     @test sprint(show, str) == "CFString(\"foobar\")"
 end
@@ -262,7 +280,6 @@ end
 
     @test run_loop(0.1) == CoreFoundation.RunLoopRunTimedOut
 end
-
 
 @testset "notifications" begin
     center = darwin_notify_center()
