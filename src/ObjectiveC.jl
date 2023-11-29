@@ -28,8 +28,9 @@ include("syntax.jl")
 
 # API wrappers
 include("foundation.jl")
+include("core_foundation.jl")
 include("dispatch.jl")
-export Foundation, Dispatch
+export Foundation, CoreFoundation, Dispatch
 
 # High-level functionality
 include("classes.jl")
