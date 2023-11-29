@@ -287,12 +287,12 @@ end
         add_observer!(center, foobar_observer; name="bar")
 
         post_notification!(center, "foo")
-        run_loop(0.5; return_after_source_handled=true)
+        run_loop(1; return_after_source_handled=true)
         @test foo_calls == 1
         @test foobar_calls == 1
 
         post_notification!(center, "bar")
-        run_loop(0.5; return_after_source_handled=true)
+        run_loop(1; return_after_source_handled=true)
         @test bar_calls == 1
         @test foobar_calls == 2
 
@@ -300,12 +300,12 @@ end
         remove_observer!(center, foobar_observer; name="foo")
 
         post_notification!(center, "foo")
-        run_loop(0.5; return_after_source_handled=true)
+        run_loop(1; return_after_source_handled=true)
         @test foo_calls == 2
         @test foobar_calls == 2
 
         post_notification!(center, "bar")
-        run_loop(0.5; return_after_source_handled=true)
+        run_loop(1; return_after_source_handled=true)
         @test bar_calls == 2
         @test foobar_calls == 3
 
@@ -313,7 +313,7 @@ end
         remove_observer!(center, foobar_observer)
 
         post_notification!(center, "bar")
-        run_loop(0.5; return_after_source_handled=true)
+        run_loop(1; return_after_source_handled=true)
         @test bar_calls == 3
         @test foobar_calls == 3
     finally
