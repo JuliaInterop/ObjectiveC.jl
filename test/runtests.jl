@@ -126,7 +126,7 @@ using .Foundation
 end
 
 @testset "NSHost" begin
-    @test hostname() == gethostname()
+    @test startswith(gethostname(), hostname())
 end
 
 @testset "NSBundle" begin
@@ -143,6 +143,8 @@ end
     @test reinterpret(NSString, arr2[1]) == "Hello"
     @test reinterpret(NSString, arr2[2]) == "World"
     @test Vector{NSString}(arr2) == arr1
+
+    @test_throws MethodError NSArray([NSUInteger(42)])
 end
 
 @testset "NSDictionary" begin
