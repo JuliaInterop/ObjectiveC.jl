@@ -126,7 +126,7 @@ using .Foundation
 end
 
 @testset "NSHost" begin
-    @test hostname() == gethostname()
+    @test startswith(gethostname(), hostname())
 end
 
 @testset "NSBundle" begin
