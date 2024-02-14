@@ -13,7 +13,7 @@ else
   const NSInteger = Int32
   const NSUInteger = UInt32
 end
-const MSIntegerMin = typemin(NSInteger)
+const NSIntegerMin = typemin(NSInteger)
 const NSIntegerMax = typemax(NSInteger)
 const NSUIntegerMax = typemax(NSUInteger)
 
