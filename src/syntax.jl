@@ -269,8 +269,6 @@ macro objcwrapper(ex...)
   ex = quote
     $(ex.args...)
 
-    Base.unsafe_convert(T::Type{<:id}, dev::$instance) = convert(T, dev.ptr)
-
     # add a pseudo constructor to the abstract type that also checks for nil pointers.
     function $name(ptr::id)
       ptr == nil && throw(UndefRefError())
@@ -283,13 +281,24 @@ macro objcwrapper(ex...)
     ex = quote
       $(ex.args...)
 
-      Base.:(==)(a::$instance, b::$instance) = a.ptr == b.ptr
-      Base.hash(dev::$instance, h::UInt) = hash(dev.ptr, h)
+      Base.:(==)(a::$instance, b::$instance) = pointer(a) == pointer(b)
+      Base.hash(obj::$instance, h::UInt) = hash(pointer(obj), h)
     end
   end
 
   esc(ex)
 end
+
+Base.pointer(obj::Object) = obj.ptr
+
+# when passing a single object, we automatically convert it to a pointer
+Base.unsafe_convert(T::Type{<:id}, obj::Object) = convert(T, pointer(obj))
+
+# in the case of a vector of objects, we expect the caller to have converted them
+# XXX: it's too bad `cconvert` cannot do the `[pointer(obj) for obj in objs]` for us
+#      (because we can only derive unsafe references in `unsafe_convert`)
+Base.unsafe_convert(T::Type{<:id}, ptrs::Vector{<:id}) =
+  reinterpret(T, pointer(ptrs))
 
 
 # Property Accesors

@@ -179,9 +179,12 @@ end
 
 NSArray() = NSArray(@objc [NSArray array]::id{NSArray})
 
-function NSArray(elements::Vector)
-    arr = @objc [NSArray arrayWithObjects:elements::Ptr{id{Object}}
-                                    count:length(elements)::NSUInteger]::id{NSArray}
+function NSArray(elements::Vector{<:NSObject})
+    arr = GC.@preserve elements begin
+        pointers = [element.ptr for element in elements]
+        @objc [NSArray arrayWithObjects:pointers::id{Object}
+                                 count:length(elements)::NSUInteger]::id{NSArray}
+    end
     return NSArray(arr)
 end
 
