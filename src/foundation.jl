@@ -180,11 +180,8 @@ end
 NSArray() = NSArray(@objc [NSArray array]::id{NSArray})
 
 function NSArray(elements::Vector{<:NSObject})
-    arr = GC.@preserve elements begin
-        pointers = [element.ptr for element in elements]
-        @objc [NSArray arrayWithObjects:pointers::id{Object}
-                                 count:length(elements)::NSUInteger]::id{NSArray}
-    end
+    arr = @objc [NSArray arrayWithObjects:elements::id{Object}
+                                    count:length(elements)::NSUInteger]::id{NSArray}
     return NSArray(arr)
 end
 

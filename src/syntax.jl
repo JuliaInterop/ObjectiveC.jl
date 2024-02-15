@@ -291,14 +291,19 @@ end
 
 Base.pointer(obj::Object) = obj.ptr
 
-# when passing a single object, we automatically convert it to a pointer
+# when passing a single object, we automatically convert it to an object pointer
 Base.unsafe_convert(T::Type{<:id}, obj::Object) = convert(T, pointer(obj))
 
-# in the case of a vector of objects, we expect the caller to have converted them
-# XXX: it's too bad `cconvert` cannot do the `[pointer(obj) for obj in objs]` for us
-#      (because we can only derive unsafe references in `unsafe_convert`)
-Base.unsafe_convert(T::Type{<:id}, ptrs::Vector{<:id}) =
-  reinterpret(T, pointer(ptrs))
+# when passing an array of objects, perform recursive conversion to object pointers
+# this is similar to Base.RefArray, which is used for conversion to regular pointers.
+struct idArray{T}
+  ids::Vector{id{T}}
+  roots::Vector{<:Object}
+end
+Base.cconvert(T::Type{<:id}, objs::Vector{<:Object}) =
+  idArray{eltype(T)}([pointer(obj) for obj in objs], objs)
+Base.unsafe_convert(T::Type{<:id}, arr::idArray) =
+  reinterpret(T, pointer(arr.ids))
 
 
 # Property Accesors
