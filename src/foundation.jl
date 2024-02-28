@@ -407,15 +407,14 @@ end
 
 export NSAutoreleasePool, @autoreleasepool, drain
 
-@objcwrapper immutable=false NSAutoreleasePool <: NSObject
+@objcwrapper NSAutoreleasePool <: NSObject
 
-function NSAutoreleasePool(; autorelease=true)
+function NSAutoreleasePool()
   obj = NSAutoreleasePool(@objc [NSAutoreleasePool alloc]::id{NSAutoreleasePool})
-  if autorelease
-    finalizer(release, obj)
-  end
   # XXX: this init call itself requires an autoreleasepool to be active...
   @objc [obj::id{NSAutoreleasePool} init]::id{NSAutoreleasePool}
+  # NOTE: we don't register a finalizer, as it's better to drain the pool,
+  #       and it's not allowed to both drain and release.
   obj
 end
 
@@ -432,8 +431,7 @@ function NSAutoreleasePool(f::Base.Callable)
     sticky = task.sticky
     task.sticky = true
 
-    # pools cannot be double released, so we need to disable the finalizer
-    pool = NSAutoreleasePool(; autorelease=false)
+    pool = NSAutoreleasePool()
     try
       f()
     finally
