@@ -438,7 +438,9 @@ function NSAutoreleasePool(f::Base.Callable)
       f()
     finally
       drain(pool)
-      task.sticky = sticky
+      #task.sticky = sticky
+      # XXX: we cannot safely re-enable thread migration, as the called code might have
+      #      disabled it too. instead, Julia should have a notion of "temporary pinning"
     end
   end
 end
