@@ -113,7 +113,7 @@ using .Foundation
     @objc [obj::id{NSString} release]::id{NSString}
 
     # low-level API
-    let pool=NSAutoreleasePool(; autorelease=false)
+    let pool=NSAutoreleasePool()
         obj = NSString(@objc [NSString new]::id{NSString})
         autorelease(obj)
         drain(pool)
