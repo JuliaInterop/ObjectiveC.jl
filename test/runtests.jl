@@ -17,6 +17,9 @@ using ObjectiveC
     @test @objc [obj::id{Object} isEqualTo:obj::id{Object}]::Bool
     empty_str = @objc [NSString string]::id{Object}
     @objc [obj::id stringByReplacingOccurrencesOfString:empty_str::id{Object} withString:empty_str::id{Object}]::id{Object}
+
+    # chained class + install calls
+    @objc [[NSString alloc]::id{Object} init]::id{Object}
 end
 
 @objcwrapper TestNSString <: Object
@@ -101,9 +104,30 @@ end
     end
 end
 
+using .Foundation
 @testset "foundation" begin
 
-using .Foundation
+@testset "NSAutoReleasePool" begin
+    # MRC
+    obj = NSString(@objc [NSString new]::id{NSString})
+    @objc [obj::id{NSString} release]::id{NSString}
+
+    # low-level API
+    let pool=NSAutoreleasePool(; autorelease=false)
+        obj = NSString(@objc [NSString new]::id{NSString})
+        autorelease(obj)
+        drain(pool)
+    end
+
+    # high-level API
+    @autoreleasepool begin
+        # calling the `string` constructor means we don't need `autorelease`
+        @objc [NSString string]::id{NSString}
+    end
+end
+
+# run the remainder of the tests in an autorelease pool to avoid leaking objects
+@autoreleasepool begin
 
 @testset "NSString" begin
     str = NSString()
@@ -221,6 +245,8 @@ end
     @test file.lastPathComponent == "baz.qux"
     @test file.pathComponents == NSString["/", "foo", "bar", "baz.qux"]
     @test file != url
+end
+
 end
 
 end

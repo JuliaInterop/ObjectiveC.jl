@@ -18,7 +18,7 @@ const NSIntegerMax = typemax(NSInteger)
 const NSUIntegerMax = typemax(NSUInteger)
 
 
-export NSObject, retain, release, is_kind_of
+export NSObject, retain, release, autorelease, is_kind_of
 
 @objcwrapper NSObject <: Object
 
@@ -40,6 +40,8 @@ function Base.show(io::IO, ::MIME"text/plain", obj::NSObject)
 end
 
 release(obj::NSObject) = @objc [obj::id{NSObject} release]::Cvoid
+
+autorelease(obj::NSObject) = @objc [obj::id{NSObject} autorelease]::Cvoid
 
 retain(obj::NSObject) = @objc [obj::id{NSObject} retain]::Cvoid
 
@@ -83,7 +85,8 @@ Base.:(==)(v1::NSValue, v2::NSValue) =
 end
 
 NSValue(x::Ptr) = NSValue(@objc [NSValue valueWithPointer:x::Ptr{Cvoid}]::id{NSValue})
-NSValue(x::Union{NSRange,UnitRange}) = NSValue(@objc [NSValue valueWithRange:x::NSRange]::id{NSValue})
+NSValue(x::Union{NSRange,UnitRange}) =
+  NSValue(@objc [NSValue valueWithRange:x::NSRange]::id{NSValue})
 # ...
 
 
@@ -150,11 +153,14 @@ end
 Base.cconvert(::Type{id{NSString}}, str::String) = NSString(str)
 Base.convert(::Type{NSString}, str::String) = NSString(str)
 
-Base.:(==)(s1::Union{String,NSString}, s2::Union{String,NSString}) = String(s1) == String(s2)
-Base.:(==)(s1::NSString, s2::NSString) = @objc [s1::id{NSString} isEqualToString:s2::id{NSString}]::Bool
+Base.:(==)(s1::Union{String,NSString}, s2::Union{String,NSString}) =
+  String(s1) == String(s2)
+Base.:(==)(s1::NSString, s2::NSString) =
+  @objc [s1::id{NSString} isEqualToString:s2::id{NSString}]::Bool
 
 NSString() = NSString(@objc [NSString string]::id{NSString})
-NSString(data::String) = NSString(@objc [NSString stringWithUTF8String:data::Ptr{Cchar}]::id{NSString})
+NSString(data::String) =
+  NSString(@objc [NSString stringWithUTF8String:data::Ptr{Cchar}]::id{NSString})
 Base.length(s::NSString) = Int(s.length)
 Base.String(s::NSString) = unsafe_string(@objc [s::id{NSString} UTF8String]::Ptr{Cchar})
 
@@ -162,11 +168,14 @@ Base.String(s::NSString) = unsafe_string(@objc [s::id{NSString} UTF8String]::Ptr
 Base.string(s::NSString) = String(s)
 Base.print(io::IO, s::NSString) = print(io, String(s))
 
-Base.show(io::IO, ::MIME"text/plain", s::NSString) = print(io, "NSString(", repr(String(s)), ")")
+Base.show(io::IO, ::MIME"text/plain", s::NSString) =
+  print(io, "NSString(", repr(String(s)), ")")
 Base.show(io::IO, s::NSString) = show(io, String(s))
 
-Base.contains(s::NSString, t::AbstractString) = @objc [s::id{NSString} containsString:t::id{NSString}]::Bool
-Base.contains(s::AbstractString, t::NSString) = @objc [s::id{NSString} containsString:t::id{NSString}]::Bool
+Base.contains(s::NSString, t::AbstractString) =
+  @objc [s::id{NSString} containsString:t::id{NSString}]::Bool
+Base.contains(s::AbstractString, t::NSString) =
+  @objc [s::id{NSString} containsString:t::id{NSString}]::Bool
 
 
 export NSArray
@@ -395,5 +404,52 @@ function Base.copy(block::NSBlock)
     @objc [block::id{NSBlock} copy]::id{NSBlock}
 end
 
+
+export NSAutoreleasePool, @autoreleasepool, drain
+
+@objcwrapper immutable=false NSAutoreleasePool <: NSObject
+
+function NSAutoreleasePool(; autorelease=true)
+  obj = NSAutoreleasePool(@objc [NSAutoreleasePool alloc]::id{NSAutoreleasePool})
+  if autorelease
+    finalizer(release, obj)
+  end
+  # XXX: this init call itself requires an autoreleasepool to be active...
+  @objc [obj::id{NSAutoreleasePool} init]::id{NSAutoreleasePool}
+  obj
+end
+
+drain(pool::NSAutoreleasePool) = @objc [pool::id{NSAutoreleasePool} drain]::Cvoid
+
+# high-level interface to wrap Julia code in an autorelease pool
+const NSAutoreleaseLock = ReentrantLock()
+function NSAutoreleasePool(f::Base.Callable)
+  # we cannot switch between multiple autorelease pools, so ensure only one is ever active.
+  # XXX: support multiple pools, as long as they run on separate threads?
+  Base.@lock NSAutoreleaseLock begin
+    # autorelease pools are thread-bound, so ensure we don't migrate to another thread
+    task = current_task()
+    sticky = task.sticky
+    task.sticky = true
+
+    # pools cannot be double released, so we need to disable the finalizer
+    pool = NSAutoreleasePool(; autorelease=false)
+    try
+      f()
+    finally
+      drain(pool)
+      task.sticky = sticky
+    end
+  end
+end
+
+# for compatibility with Objective-C code
+macro autoreleasepool(ex)
+  quote
+    $NSAutoreleasePool() do
+      $(esc(ex))
+    end
+  end
+end
 
 end
