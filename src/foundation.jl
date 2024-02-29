@@ -29,6 +29,8 @@ export NSObject, retain, release, autorelease, is_kind_of
     @autoproperty hash::NSUInteger
     @autoproperty description::id{NSString}
     @autoproperty debugDescription::id{NSString}
+
+    @autoproperty retainCount::NSUInteger
 end
 
 function Base.show(io::IO, ::MIME"text/plain", obj::NSObject)
