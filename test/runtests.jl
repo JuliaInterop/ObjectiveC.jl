@@ -124,6 +124,10 @@ using .Foundation
         # calling the `string` constructor means we don't need `autorelease`
         @objc [NSString string]::id{NSString}
     end
+    @autoreleasepool function foo()
+        @objc [NSString string]::id{NSString}
+    end
+    foo()
 end
 
 # run the remainder of the tests in an autorelease pool to avoid leaking objects
