@@ -445,6 +445,7 @@ enclosed code block has finished.
 
 Note that due to technical limitations, this API prevents the current task from migrating
 to another thread. In addition, only one autorelease do-block can be active at a time.
+To disable these limitations, use the unsafe [`NSUnsafeAutoreleasePool`](@ref) instead.
 
 See also: [`@autoreleasepool`](@ref)
 """
@@ -470,10 +471,19 @@ function NSAutoreleasePool(f::Base.Callable)
 end
 const NSAutoreleaseLock = ReentrantLock()
 
+function NSUnsafeAutoreleasePool(f::Base.Callable)
+  pool = NSAutoreleasePool()
+  try
+    f()
+  finally
+    drain(pool)
+  end
+end
+
 
 """
-    @autoreleasepool code...
-    @autoreleasepool function ... end
+    @autoreleasepool [kwargs...] code...
+    @autoreleasepool [kwargs...] function ... end
 
 High-level interface to wrap Julia code in an autorelease pool. This macro can be used
 within a function, or as a function decorator. In both cases, the macro ensures that the
@@ -482,15 +492,35 @@ enclosed code block has finished.
 
 See also: [`NSAutoreleasePool`](@ref)
 """
-macro autoreleasepool(ex)
-  if Meta.isexpr(ex, :function)
+macro autoreleasepool(ex...)
+  code = ex[end]
+  kwargs = ex[1:end-1]
+
+  # extract keyword arguments that are handled by this macro
+  unsafe = false
+  for kwarg in kwargs
+    if Meta.isexpr(kwarg, :(=))
+      key, value = kwarg.args
+      if key == :unsafe
+          isa(value, Bool) || throw(ArgumentError("Invalid value for keyword argument `unsafe`: got `$value`, expected literal boolean value"))
+          unsafe = value
+      else
+          error("Invalid keyword argument to @autoreleasepool: $kwarg")
+      end
+    else
+      throw(ArgumentError("Invalid keyword argument to @autoreleasepool: $kwarg"))
+    end
+  end
+  f = unsafe ? NSUnsafeAutoreleasePool : NSAutoreleasePool
+
+  if Meta.isexpr(code, :function)
     # function definition
-    sig = ex.args[1]
+    sig = code.args[1]
     @assert Meta.isexpr(sig, :call)
-    body = ex.args[2]
+    body = code.args[2]
     @assert Meta.isexpr(body, :block)
     managed_body = quote
-      $NSAutoreleasePool() do
+      $f() do
         $body
       end
     end
@@ -498,8 +528,8 @@ macro autoreleasepool(ex)
   else
     # code block
     quote
-      $NSAutoreleasePool() do
-        $(esc(ex))
+      $f() do
+        $(esc(code))
       end
     end
   end
