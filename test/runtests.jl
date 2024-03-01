@@ -384,6 +384,33 @@ end
 
 end
 
+@testset "OS" begin
+
+using .OS
+
+@testset "log" begin
+
+let logger = OSLog()
+    logger("test")
+    logger("test", type=OS.LOG_TYPE_INFO)
+    @test is_enabled(logger, OS.LOG_TYPE_INFO)
+    @test !is_enabled(logger, OS.LOG_TYPE_DEBUG)
+end
+
+let logger = OSLog(disabled=true)
+    logger("test")
+    logger("test", type=OS.LOG_TYPE_INFO)
+    @test !is_enabled(logger, OS.LOG_TYPE_INFO)
+end
+
+let logger = OSLog("org.juliainterop.objectivec", "test suite")
+    logger("test")
+    logger("test", type=OS.LOG_TYPE_INFO)
+    @test is_enabled(logger, OS.LOG_TYPE_INFO)
+end
+
+end
+
 @testset "tracing" begin
     ObjectiveC.enable_tracing(true)
     cmd = ```$(Base.julia_cmd()) --project=$(Base.active_project())
