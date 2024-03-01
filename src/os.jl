@@ -100,7 +100,7 @@ end
     HasNonScalarItems = 2
 end
 
-@inline function os_log_with_type(log::OSLog, type::os_log_type_t, str::String)
+@inline function os_log_call(f, str::String)
     # we do not support arbitrary formatting, but only string arguments which are passed
     # using a hard-coded '%{public}s' format. for arbitrary formatting, look at Clang's
     # `__builtin_os_log_format_buffer_size` and `__builtin_os_log_format` implementations.
@@ -133,11 +133,117 @@ end
             reinterpret(NTuple{8,UInt8}, UInt64(pointer(cstr)))...
         ))
 
+        f(buf)
+    end
+end
+
+@inline function os_log_with_type(log::OSLog, type::os_log_type_t, str::String)
+    os_log_call(str) do buf
         @ccall _os_log_impl(libjulia_header[]::Ptr{Cvoid},
                             log::os_log_t, type::os_log_type_t,
                             "%{public}s"::Cstring, buf::Ptr{UInt8}, sizeof(buf)::UInt32
                            )::Cvoid
     end
 end
+
+
+## signpost
+
+export OSSignpost, @signpost_interval, signpost_event
+
+const os_signpost_id_t = UInt64
+struct OSSignpost
+    id::os_signpost_id_t
+end
+
+OSSignpostNull() = OSSignpost(0)
+OSSignpostInvalid() = OSSignpost(-1%UInt64)
+OSSignpostExclusive() = OSSignpost(0xEEEEB0B5B2B2EEEE)
+
+function OSSignpost(log::OSLog)
+    id = @ccall os_signpost_id_generate(log::os_log_t)::os_signpost_id_t
+    OSSignpost(id)
+end
+
+Base.convert(::Type{os_signpost_id_t}, signpost::OSSignpost) = signpost.id
+
+is_signpost_enabled(log::OSLog) = Bool(@ccall os_signpost_enabled(log::os_log_t)::Cint)
+
+@cenum os_signpost_type_t::UInt8 begin
+    SIGNPOST_EVENT          = 0
+    SIGNPOST_INTERVAL_BEGIN = 1
+    SIGNPOST_INTERVAL_END   = 2
+end
+
+function os_signpost_emit_with_type(log::OSLog, signpost::OSSignpost, type::os_signpost_type_t,
+                                    name::String, msg::String)
+    if is_signpost_enabled(log)
+        os_log_call(msg) do buf
+            @ccall _os_signpost_emit_with_name_impl(libjulia_header[]::Ptr{Cvoid},
+                                                    log::os_log_t, type::os_signpost_type_t,
+                                                    signpost::os_signpost_id_t, name::Cstring,
+                                                    "%s"::Cstring, buf::Ptr{UInt8},
+                                                    sizeof(buf)::UInt32)::Cvoid
+        end
+    end
+end
+
+interval_begin(log::OSLog, signpost::OSSignpost, name::String, msg::String="") =
+    os_signpost_emit_with_type(log, signpost, SIGNPOST_INTERVAL_BEGIN, name, msg)
+
+interval_end(log::OSLog, signpost::OSSignpost, name::String, msg::String="") =
+    os_signpost_emit_with_type(log, signpost, SIGNPOST_INTERVAL_END, name, msg)
+
+"""
+    @signpost_interval [kwargs...] name ex
+
+Run `ex` within a signposted interval called `name`.
+
+The following keyword arguments are supports:
+
+    - `log`: the `OSLog` object to use for logging. By default, the default logger is used.
+    - `start`: the message to log at the start of the interval. By default, "start".
+    - `stop`: the message to log at the end of the interval. By default, "end".
+"""
+macro signpost_interval(name, ex...)
+    # destructure the expression
+    code = ex[end]
+    kwargs = ex[1:end-1]
+
+    # parse the keyword arguments
+    log = :($OSLog())
+    start_msg = "start"
+    stop_msg = "stop"
+    for kwarg in kwargs
+        if Meta.isexpr(kwarg, :(=))
+            key, value = kwarg.args
+            if key == :log
+                log = value
+            elseif key == :start
+                start_msg = value
+            elseif key == :stop
+                stop_msg = value
+            else
+                throw(ArgumentError("Invalid keyword argument to OS.@signpost_interval: $kwarg"))
+            end
+        else
+            throw(ArgumentError("Invalid keyword argument to CUDA.@profile: $kwarg"))
+        end
+    end
+
+
+    quote
+        signpost = OSSignpost($(esc(log)))
+        interval_begin($(esc(log)), signpost, $(esc(name)), $(esc(start_msg)))
+        try
+            $(esc(ex))
+        finally
+            interval_end($(esc(log)), signpost, $(esc(name)), $(esc(stop_msg)))
+        end
+    end
+end
+
+signpost_event(log::OSLog, name::String, msg::String="") =
+    os_signpost_emit_with_type(log, OSSignpostNull(), SIGNPOST_EVENT, name, msg)
 
 end
