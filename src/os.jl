@@ -23,7 +23,7 @@ end
 
 ## log
 
-export OSLog, is_enabled
+export OSLog
 
 struct os_log_s end
 const os_log_t = Ptr{os_log_s}
@@ -71,11 +71,11 @@ OSLog(; disabled::Bool=false) = disabled ? OS_LOG_DISABLED() : OS_LOG_DEFAULT()
     LOG_TYPE_FAULT   = 0x11
 end
 
-is_enabled(log::OSLog, type::os_log_type_t) =
+is_log_enabled(log::OSLog, type::os_log_type_t) =
     Bool(@ccall os_log_type_enabled(log::os_log_t, type::os_log_type_t)::Cint)
 
 function (log::OSLog)(msg::String; type::os_log_type_t=LOG_TYPE_DEFAULT)
-    if is_enabled(log, type)
+    if is_log_enabled(log, type)
         os_log_with_type(log, type, msg)
     end
 end
@@ -194,6 +194,16 @@ interval_begin(log::OSLog, signpost::OSSignpost, name::String, msg::String="") =
 interval_end(log::OSLog, signpost::OSSignpost, name::String, msg::String="") =
     os_signpost_emit_with_type(log, signpost, SIGNPOST_INTERVAL_END, name, msg)
 
+# Like a try-finally block, except without introducing the try scope
+# NOTE: This is deprecated and should not be used from user logic. A proper solution to
+# this problem will be introduced in https://github.com/JuliaLang/julia/pull/39217
+macro __tryfinally(ex, fin)
+    Expr(:tryfinally,
+       :($(esc(ex))),
+       :($(esc(fin)))
+       )
+end
+
 """
     @signpost_interval [kwargs...] name ex
 
@@ -203,7 +213,8 @@ The following keyword arguments are supports:
 
     - `log`: the `OSLog` object to use for logging. By default, the default logger is used.
     - `start`: the message to log at the start of the interval. By default, "start".
-    - `stop`: the message to log at the end of the interval. By default, "end".
+    - `stop`: the message to log at the end of the interval. By default, "end", or "error"
+      if an error occured during evaluation of `ex`.
 """
 macro signpost_interval(name, ex...)
     # destructure the expression
@@ -224,22 +235,24 @@ macro signpost_interval(name, ex...)
             elseif key == :stop
                 stop_msg = value
             else
-                throw(ArgumentError("Invalid keyword argument to OS.@signpost_interval: $kwarg"))
+                throw(ArgumentError("Invalid keyword argument to @signpost_interval: $kwarg"))
             end
         else
-            throw(ArgumentError("Invalid keyword argument to CUDA.@profile: $kwarg"))
+            throw(ArgumentError("Invalid keyword argument to @signpost_interval: $kwarg"))
         end
     end
-
 
     quote
         signpost = OSSignpost($(esc(log)))
         interval_begin($(esc(log)), signpost, $(esc(name)), $(esc(start_msg)))
-        try
-            $(esc(ex))
-        finally
-            interval_end($(esc(log)), signpost, $(esc(name)), $(esc(stop_msg)))
-        end
+        local stop_msg = "error"
+        @__tryfinally(begin
+            ret = $(esc(code))
+            stop_msg = $(esc(stop_msg))
+            ret
+        end, begin
+            interval_end($(esc(log)), signpost, $(esc(name)), stop_msg)
+        end)
     end
 end
 
