@@ -427,25 +427,38 @@ end
 
 # specifying a logger
 let
-    @signpost_interval "test" log=OSLog("org.juliainterop.objectivec", "test suite") begin end
+    @signpost_interval log=OSLog() "test" begin end
 end
 
 # specifying begin and end messages
 let
     foo = 41
-    @signpost_interval "test" start="begin $foo" stop="end $bar" begin
+    @signpost_interval start="begin $foo" stop="end $bar" "test" begin
         bar = 42
+    end
+end
+
+# delayed evaluation of inputs
+let
+    @test @signpost_interval log=OSLog(enabled=false) start=error() stop=error() error() begin
+        # the body should still be evaluated
+        true
     end
 end
 end
 
 @testset "event" begin
-signpost_event("test")
-signpost_event("test", "with details")
 
-log = OSLog("org.juliainterop.objectivec", "test suite")
-signpost_event(log, "test", "with details")
+# basic usage
+@signpost_event "test"
+@signpost_event "test" "with details"
+
+# specifying a logger
+@signpost_event log=OSLog() "test" "with details"
 end
+
+# delayed evaluation
+@signpost_event log=OSLog(enabled=false) error() error()
 
 end
 
