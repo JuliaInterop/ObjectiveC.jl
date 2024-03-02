@@ -256,6 +256,13 @@ macro signpost_interval(name, ex...)
     end
 end
 
+"""
+    signpost_even([log], name, [msg])
+
+Emit a signposted event with the given `name` and `msg` (optional). If `log` is not
+specified, the default logger is used.
+"""
+signpost_event(name::String, msg::String="") = signpost_event(OSLog(), name, msg)
 signpost_event(log::OSLog, name::String, msg::String="") =
     os_signpost_emit_with_type(log, OSSignpostNull(), SIGNPOST_EVENT, name, msg)
 

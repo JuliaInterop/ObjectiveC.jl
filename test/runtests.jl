@@ -408,6 +408,7 @@ end
 
 @testset "signpost" begin
 
+@testset "interval" begin
 # basic usage
 let
     @test @signpost_interval "test" begin
@@ -435,6 +436,15 @@ let
     @signpost_interval "test" start="begin $foo" stop="end $bar" begin
         bar = 42
     end
+end
+end
+
+@testset "event" begin
+signpost_event("test")
+signpost_event("test", "with details")
+
+log = OSLog("org.juliainterop.objectivec", "test suite")
+signpost_event(log, "test", "with details")
 end
 
 end
