@@ -38,11 +38,11 @@ OS_LOG_DISABLED() = OSLog(cglobal(:_os_log_disabled, os_log_t))
 OS_LOG_DEFAULT() = OSLog(cglobal(:_os_log_default, os_log_t))
 
 """
-    OSLog([subsystem::String], [category::String]; disabled=false)
+    OSLog([subsystem::String], [category::String]; enabled=true)
 
 Create a new `OSLog` object, which can be used to log messages to the system log.
 Passing no options creates a default logger, but it is recommended to specify the
-subsystem and category of the logger. By setting `disabled` to `true`, the logger
+subsystem and category of the logger. By setting `enabled` to `false`, the logger
 can be disabled, which is useful for conditional logging.
 
 Construction of these objects is very cheap, and as such it is recommended to create
@@ -53,15 +53,15 @@ string. The `type` keyword argument can be used to specify the log type, which c
 be one of `LOG_TYPE_DEFAULT`, `LOG_TYPE_INFO`, `LOG_TYPE_DEBUG`, `LOG_TYPE_ERROR`,
 or `LOG_TYPE_FAULT`. By default, the log type is `LOG_TYPE_DEFAULT`.
 """
-function OSLog(subsystem::String, category::String; disabled=false)
-    if disabled
-        OS_LOG_DISABLED()
-    else
+function OSLog(subsystem::String, category::String; enabled=true)
+    if enabled
         handle = @ccall os_log_create(subsystem::Cstring, category::Cstring)::os_log_t
         OSLog(handle)
+    else
+        OS_LOG_DISABLED()
     end
 end
-OSLog(; disabled::Bool=false) = disabled ? OS_LOG_DISABLED() : OS_LOG_DEFAULT()
+OSLog(; enabled::Bool=true) = enabled ? OS_LOG_DEFAULT() : OS_LOG_DISABLED()
 
 @cenum os_log_type_t::UInt8 begin
     LOG_TYPE_DEFAULT = 0x00

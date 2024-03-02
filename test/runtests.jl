@@ -394,7 +394,7 @@ let logger = OSLog()
     logger("test", type=OS.LOG_TYPE_INFO)
 end
 
-let logger = OSLog(disabled=true)
+let logger = OSLog(enabled=false)
     logger("test")
     logger("test", type=OS.LOG_TYPE_INFO)
 end
