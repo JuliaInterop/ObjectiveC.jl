@@ -384,6 +384,73 @@ end
 
 end
 
+using .OS
+@testset "os" begin
+
+@testset "log" begin
+
+let logger = OSLog()
+    logger("test")
+    logger("test", type=OS.LOG_TYPE_INFO)
+end
+
+let logger = OSLog(enabled=false)
+    logger("test")
+    logger("test", type=OS.LOG_TYPE_INFO)
+end
+
+let logger = OSLog("org.juliainterop.objectivec", "test suite")
+    logger("test")
+    logger("test", type=OS.LOG_TYPE_INFO)
+end
+
+end
+
+@testset "signpost" begin
+
+@testset "interval" begin
+# basic usage
+let
+    @test @signpost_interval "test" begin
+        true
+    end
+end
+
+# scope handling
+let
+    foo = @signpost_interval "test" begin
+        bar = 42
+    end
+    @test foo == 42
+    @test bar == 42
+end
+
+# specifying a logger
+let
+    @signpost_interval "test" log=OSLog("org.juliainterop.objectivec", "test suite") begin end
+end
+
+# specifying begin and end messages
+let
+    foo = 41
+    @signpost_interval "test" start="begin $foo" stop="end $bar" begin
+        bar = 42
+    end
+end
+end
+
+@testset "event" begin
+signpost_event("test")
+signpost_event("test", "with details")
+
+log = OSLog("org.juliainterop.objectivec", "test suite")
+signpost_event(log, "test", "with details")
+end
+
+end
+
+end
+
 @testset "tracing" begin
     ObjectiveC.enable_tracing(true)
     cmd = ```$(Base.julia_cmd()) --project=$(Base.active_project())
