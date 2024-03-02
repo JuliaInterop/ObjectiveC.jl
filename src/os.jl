@@ -151,7 +151,7 @@ end
 
 ## signpost
 
-export OSSignpost, @signpost_interval, signpost_event
+export OSSignpost, @signpost_interval, @signpost_event
 
 const os_signpost_id_t = UInt64
 struct OSSignpost
@@ -179,14 +179,15 @@ end
 
 function os_signpost_emit_with_type(log::OSLog, signpost::OSSignpost, type::os_signpost_type_t,
                                     name::String, msg::String)
-    if is_signpost_enabled(log)
-        os_log_call(msg) do buf
-            @ccall _os_signpost_emit_with_name_impl(libjulia_header[]::Ptr{Cvoid},
-                                                    log::os_log_t, type::os_signpost_type_t,
-                                                    signpost::os_signpost_id_t, name::Cstring,
-                                                    "%s"::Cstring, buf::Ref{UInt8},
-                                                    sizeof(buf)::UInt32)::Cvoid
-        end
+    # NOTE: contrary to Apple's implementation, we do not check if signposts are enabled
+    #       but assume that the user has already done so. by checking earlier, it's
+    #       possible to also avoid the string formatting and further reduce overhead.
+    os_log_call(msg) do buf
+        @ccall _os_signpost_emit_with_name_impl(libjulia_header[]::Ptr{Cvoid},
+                                                log::os_log_t, type::os_signpost_type_t,
+                                                signpost::os_signpost_id_t, name::Cstring,
+                                                "%s"::Cstring, buf::Ref{UInt8},
+                                                sizeof(buf)::UInt32)::Cvoid
     end
 end
 
@@ -206,66 +207,112 @@ macro __tryfinally(ex, fin)
        )
 end
 
+# TODO: make signpost_event a macro and prevent rendering the messages if the log is disabled
+#       also ensures it works this way for intervals
+
 """
     @signpost_interval [kwargs...] name ex
 
 Run `ex` within a signposted interval called `name`.
 
-The following keyword arguments are supports:
+The following keyword arguments are supported:
 
     - `log`: the `OSLog` object to use for logging. By default, the default logger is used.
     - `start`: the message to log at the start of the interval. By default, "start".
     - `stop`: the message to log at the end of the interval. By default, "end", or "error"
       if an error occured during evaluation of `ex`. May refer to variables defined in `ex`.
 """
-macro signpost_interval(name, ex...)
+macro signpost_interval(ex...)
+    ex = [ex...]
+
     # destructure the expression
-    code = ex[end]
-    kwargs = ex[1:end-1]
+    kwargs = []
+    while !isempty(ex) && Meta.isexpr(ex[1], :(=))
+        push!(kwargs, popfirst!(ex))
+    end
+    if length(ex) != 2
+        throw(ArgumentError("Invalid usage of @signpost_interval: expected 2 arguments"))
+    end
+    name, code = ex
 
     # parse the keyword arguments
-    log = :($OSLog())
-    start_msg = "start"
-    stop_msg = "stop"
+    log_ex = :($OSLog())
+    start_ex = "start"
+    stop_ex = "stop"
     for kwarg in kwargs
-        if Meta.isexpr(kwarg, :(=))
-            key, value = kwarg.args
-            if key == :log
-                log = value
-            elseif key == :start
-                start_msg = value
-            elseif key == :stop
-                stop_msg = value
-            else
-                throw(ArgumentError("Invalid keyword argument to @signpost_interval: $kwarg"))
-            end
+        key, value = kwarg.args
+        if key == :log
+            log_ex = value
+        elseif key == :start
+            start_ex = value
+        elseif key == :stop
+            stop_ex = value
         else
             throw(ArgumentError("Invalid keyword argument to @signpost_interval: $kwarg"))
         end
     end
 
     quote
-        signpost = OSSignpost($(esc(log)))
-        interval_begin($(esc(log)), signpost, $(esc(name)), $(esc(start_msg)))
-        local stop_msg = "error"
-        @__tryfinally(begin
-            ret = $(esc(code))
-            stop_msg = $(esc(stop_msg))
-            ret
-        end, begin
-            interval_end($(esc(log)), signpost, $(esc(name)), stop_msg)
-        end)
+        log = $(esc(log_ex))
+        if is_signpost_enabled(log)
+            local signpost = OSSignpost(log)
+            local name = $(esc(name))
+            local start_msg = $(esc(start_ex))
+            interval_begin(log, signpost, name, start_msg)
+            local stop_msg = "error"
+            @__tryfinally(begin
+                ret = $(esc(code))
+                stop_msg = $(esc(stop_ex))
+                ret
+            end, begin
+                interval_end(log, signpost, name, stop_msg)
+            end)
+        else
+            $(esc(code))
+        end
     end
 end
 
 """
-    signpost_even([log::OSLog], name::String, [msg::String])
+    @signpost_event [kwargs...] name [message]
 
-Emit a signposted event with the given `name` and `msg` (optional). If `log` is not
-specified, the default logger is used.
+Emit a signposted event with the given `name` and optional `message`.
+
+The following keyword arguments are supported:
+
+    - `log`: the `OSLog` object to use for logging. By default, the default logger is used.
 """
-signpost_event(name::String, msg::String="") = signpost_event(OSLog(), name, msg)
-signpost_event(log::OSLog, name::String, msg::String="") =
-    os_signpost_emit_with_type(log, OSSignpostNull(), SIGNPOST_EVENT, name, msg)
+macro signpost_event(ex...)
+    ex = [ex...]
+
+    # destructure the expression
+    kwargs = []
+    while !isempty(ex) && Meta.isexpr(ex[1], :(=))
+        push!(kwargs, popfirst!(ex))
+    end
+    if length(ex) < 1
+        throw(ArgumentError("Invalid usage of @signpost_event: expected at least 1 positional argument"))
+    end
+    name = popfirst!(ex)
+    msg = isempty(ex) ? "" : popfirst!(ex)
+
+    # parse the keyword arguments
+    log_ex = :($OSLog())
+    for kwarg in kwargs
+        key, value = kwarg.args
+        if key == :log
+            log_ex = value
+        else
+            throw(ArgumentError("Invalid keyword argument to @signpost_event: $kwarg"))
+        end
+    end
+
+    quote
+        log = $(esc(log_ex))
+        if is_signpost_enabled(log)
+            os_signpost_emit_with_type(log, OSSignpostNull(), SIGNPOST_EVENT, $(esc(name)), $(esc(msg)))
+        end
+    end
+end
 
 end
