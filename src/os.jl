@@ -216,7 +216,7 @@ The following keyword arguments are supports:
     - `log`: the `OSLog` object to use for logging. By default, the default logger is used.
     - `start`: the message to log at the start of the interval. By default, "start".
     - `stop`: the message to log at the end of the interval. By default, "end", or "error"
-      if an error occured during evaluation of `ex`.
+      if an error occured during evaluation of `ex`. May refer to variables defined in `ex`.
 """
 macro signpost_interval(name, ex...)
     # destructure the expression
@@ -259,7 +259,7 @@ macro signpost_interval(name, ex...)
 end
 
 """
-    signpost_even([log], name, [msg])
+    signpost_even([log::OSLog], name::String, [msg::String])
 
 Emit a signposted event with the given `name` and `msg` (optional). If `log` is not
 specified, the default logger is used.
