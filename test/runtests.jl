@@ -384,7 +384,7 @@ end
 
 end
 
-@testset "OS" begin
+@testset "os" begin
 
 using .OS
 
@@ -407,6 +407,8 @@ let logger = OSLog("org.juliainterop.objectivec", "test suite")
     logger("test")
     logger("test", type=OS.LOG_TYPE_INFO)
     @test is_enabled(logger, OS.LOG_TYPE_INFO)
+end
+
 end
 
 end
