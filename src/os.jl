@@ -125,15 +125,17 @@ end
 
         # normally the buffer would be built statically by looking at the formatting string.
         # since we only support a single string argument, we can hard-code it here instead.
-        buf = Ref{NTuple{12, UInt8}}((
-            HasNonScalarItems,
+        buf = (
+            UInt8(HasNonScalarItems),
             UInt8(1),
             (StringKind << 4)%UInt8 | IsPublic,
             UInt8(8),
-            reinterpret(NTuple{8,UInt8}, UInt64(pointer(cstr)))...
-        ))
+            #reinterpret(NTuple{8,UInt8}, UInt64(pointer(cstr)))...
+            # XXX: the above reinterpret only works on 1.10
+            ntuple(i -> (UInt64(pointer(cstr)) >> ((i-1)*8))%UInt8, 8)...
+        )
 
-        f(buf)
+        f(buf::NTuple{12, UInt8})
     end
 end
 
@@ -141,7 +143,7 @@ end
     os_log_call(str) do buf
         @ccall _os_log_impl(libjulia_header[]::Ptr{Cvoid},
                             log::os_log_t, type::os_log_type_t,
-                            "%{public}s"::Cstring, buf::Ptr{UInt8}, sizeof(buf)::UInt32
+                            "%{public}s"::Cstring, buf::Ref{UInt8}, sizeof(buf)::UInt32
                            )::Cvoid
     end
 end
@@ -182,7 +184,7 @@ function os_signpost_emit_with_type(log::OSLog, signpost::OSSignpost, type::os_s
             @ccall _os_signpost_emit_with_name_impl(libjulia_header[]::Ptr{Cvoid},
                                                     log::os_log_t, type::os_signpost_type_t,
                                                     signpost::os_signpost_id_t, name::Cstring,
-                                                    "%s"::Cstring, buf::Ptr{UInt8},
+                                                    "%s"::Cstring, buf::Ref{UInt8},
                                                     sizeof(buf)::UInt32)::Cvoid
         end
     end
