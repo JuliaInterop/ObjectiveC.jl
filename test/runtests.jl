@@ -390,6 +390,86 @@ end
 
 end
 
+using .OS
+@testset "os" begin
+
+@testset "log" begin
+
+let logger = OSLog()
+    logger("test")
+    logger("test", type=OS.LOG_TYPE_INFO)
+end
+
+let logger = OSLog(enabled=false)
+    logger("test")
+    logger("test", type=OS.LOG_TYPE_INFO)
+end
+
+let logger = OSLog("org.juliainterop.objectivec", "test suite")
+    logger("test")
+    logger("test", type=OS.LOG_TYPE_INFO)
+end
+
+end
+
+@testset "signpost" begin
+
+@testset "interval" begin
+# basic usage
+let
+    @test @signpost_interval "test" begin
+        true
+    end
+end
+
+# scope handling
+let
+    foo = @signpost_interval "test" begin
+        bar = 42
+    end
+    @test foo == 42
+    @test bar == 42
+end
+
+# specifying a logger
+let
+    @signpost_interval log=OSLog() "test" begin end
+end
+
+# specifying begin and end messages
+let
+    foo = 41
+    @signpost_interval start="begin $foo" stop="end $bar" "test" begin
+        bar = 42
+    end
+end
+
+# delayed evaluation of inputs
+let
+    @test @signpost_interval log=OSLog(enabled=false) start=error() stop=error() error() begin
+        # the body should still be evaluated
+        true
+    end
+end
+end
+
+@testset "event" begin
+
+# basic usage
+@signpost_event "test"
+@signpost_event "test" "with details"
+
+# specifying a logger
+@signpost_event log=OSLog() "test" "with details"
+end
+
+# delayed evaluation
+@signpost_event log=OSLog(enabled=false) error() error()
+
+end
+
+end
+
 @testset "tracing" begin
     ObjectiveC.enable_tracing(true)
     cmd = ```$(Base.julia_cmd()) --project=$(Base.active_project())

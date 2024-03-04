@@ -30,7 +30,8 @@ include("syntax.jl")
 include("foundation.jl")
 include("core_foundation.jl")
 include("dispatch.jl")
-export Foundation, CoreFoundation, Dispatch
+include("os.jl")
+export Foundation, CoreFoundation, Dispatch, OS
 
 # High-level functionality
 include("classes.jl")
