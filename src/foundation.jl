@@ -29,6 +29,8 @@ export NSObject, retain, release, autorelease, is_kind_of
     @autoproperty hash::NSUInteger
     @autoproperty description::id{NSString}
     @autoproperty debugDescription::id{NSString}
+
+    @autoproperty retainCount::NSUInteger
 end
 
 function Base.show(io::IO, ::MIME"text/plain", obj::NSObject)
@@ -409,6 +411,16 @@ export NSAutoreleasePool, @autoreleasepool, drain
 
 @objcwrapper NSAutoreleasePool <: NSObject
 
+"""
+    NSAutoreleasePool()
+
+Create a new autorelease pool. This is a low-level wrapper around the Objective-C
+`NSAutoreleasePool` class, and should be used with care. For example, it does not
+automatically get released, or drain the pool on finalization.
+
+For high-level usage, consider using the do-block syntax, or [`@autoreleasepool`](@ref)
+instead.
+"""
 function NSAutoreleasePool()
   obj = NSAutoreleasePool(@objc [NSAutoreleasePool alloc]::id{NSAutoreleasePool})
   # XXX: this init call itself requires an autoreleasepool to be active...
@@ -421,7 +433,22 @@ end
 drain(pool::NSAutoreleasePool) = @objc [pool::id{NSAutoreleasePool} drain]::Cvoid
 
 # high-level interface to wrap Julia code in an autorelease pool
-const NSAutoreleaseLock = ReentrantLock()
+
+"""
+    NSAutoreleasePool() do
+      # ...
+    end
+
+High-level interface to wrap Julia code in an autorelease pool. This is equivalent to
+`@autoreleasepool` in Objective-C, and ensures that the pool is drained after the
+enclosed code block has finished.
+
+Note that due to technical limitations, this API prevents the current task from migrating
+to another thread. In addition, only one autorelease do-block can be active at a time.
+To disable these limitations, use the unsafe [`NSUnsafeAutoreleasePool`](@ref) instead.
+
+See also: [`@autoreleasepool`](@ref)
+"""
 function NSAutoreleasePool(f::Base.Callable)
   # we cannot switch between multiple autorelease pools, so ensure only one is ever active.
   # XXX: support multiple pools, as long as they run on separate threads?
@@ -442,12 +469,68 @@ function NSAutoreleasePool(f::Base.Callable)
     end
   end
 end
+const NSAutoreleaseLock = ReentrantLock()
 
-# for compatibility with Objective-C code
-macro autoreleasepool(ex)
-  quote
-    $NSAutoreleasePool() do
-      $(esc(ex))
+function NSUnsafeAutoreleasePool(f::Base.Callable)
+  pool = NSAutoreleasePool()
+  try
+    f()
+  finally
+    drain(pool)
+  end
+end
+
+
+"""
+    @autoreleasepool [kwargs...] code...
+    @autoreleasepool [kwargs...] function ... end
+
+High-level interface to wrap Julia code in an autorelease pool. This macro can be used
+within a function, or as a function decorator. In both cases, the macro ensures that the
+contained code is wrapped in an autorelease pool, and that the pool is drained after the
+enclosed code block has finished.
+
+See also: [`NSAutoreleasePool`](@ref)
+"""
+macro autoreleasepool(ex...)
+  code = ex[end]
+  kwargs = ex[1:end-1]
+
+  # extract keyword arguments that are handled by this macro
+  unsafe = false
+  for kwarg in kwargs
+    if Meta.isexpr(kwarg, :(=))
+      key, value = kwarg.args
+      if key == :unsafe
+          isa(value, Bool) || throw(ArgumentError("Invalid value for keyword argument `unsafe`: got `$value`, expected literal boolean value"))
+          unsafe = value
+      else
+          error("Invalid keyword argument to @autoreleasepool: $kwarg")
+      end
+    else
+      throw(ArgumentError("Invalid keyword argument to @autoreleasepool: $kwarg"))
+    end
+  end
+  f = unsafe ? NSUnsafeAutoreleasePool : NSAutoreleasePool
+
+  if Meta.isexpr(code, :function)
+    # function definition
+    sig = code.args[1]
+    @assert Meta.isexpr(sig, :call)
+    body = code.args[2]
+    @assert Meta.isexpr(body, :block)
+    managed_body = quote
+      $f() do
+        $body
+      end
+    end
+    esc(Expr(:function, sig, managed_body))
+  else
+    # code block
+    quote
+      $f() do
+        $(esc(code))
+      end
     end
   end
 end

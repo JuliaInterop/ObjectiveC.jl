@@ -108,22 +108,28 @@ using .Foundation
 @testset "foundation" begin
 
 @testset "NSAutoReleasePool" begin
-    # MRC
-    obj = NSString(@objc [NSString new]::id{NSString})
-    @objc [obj::id{NSString} release]::id{NSString}
+    # a function that creates an `autorelease`d object (by calling `arrayWithObjects`)
+    function trigger_autorelease()
+        str1 = NSString("Hello")
+        str2 = NSString("World")
+        arr1 = [str1, str2]
+        NSArray([str1, str2])
+    end
 
     # low-level API
     let pool=NSAutoreleasePool()
-        obj = NSString(@objc [NSString new]::id{NSString})
-        autorelease(obj)
+        trigger_autorelease()
         drain(pool)
     end
 
     # high-level API
     @autoreleasepool begin
-        # calling the `string` constructor means we don't need `autorelease`
-        @objc [NSString string]::id{NSString}
+        trigger_autorelease()
     end
+    @autoreleasepool function foo()
+        trigger_autorelease()
+    end
+    foo()
 end
 
 # run the remainder of the tests in an autorelease pool to avoid leaking objects
