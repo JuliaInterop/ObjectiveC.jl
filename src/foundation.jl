@@ -513,10 +513,21 @@ macro autoreleasepool(ex...)
   end
   f = unsafe ? NSUnsafeAutoreleasePool : NSAutoreleasePool
 
-  if Meta.isexpr(code, :function)
-    # function definition
+  if Meta.isexpr(code, :(=)) &&
+     (Meta.isexpr(code.args[1], :call) || Meta.isexpr(code.args[1], :where))
+    # function definition, short form
+    sig, body = code.args
+    @assert Meta.isexpr(body, :block)
+    managed_body = quote
+      $f() do
+        $body
+      end
+    end
+    esc(Expr(:(=), sig, managed_body))
+  elseif Meta.isexpr(code, :function)
+    # function definition, long form
     sig = code.args[1]
-    @assert Meta.isexpr(sig, :call)
+    @assert Meta.isexpr(sig, :call) || Meta.isexpr(sig, :where)
     body = code.args[2]
     @assert Meta.isexpr(body, :block)
     managed_body = quote
