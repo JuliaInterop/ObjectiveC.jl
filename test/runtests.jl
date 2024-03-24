@@ -225,6 +225,8 @@ end
         @test t != f
         @test t.boolValue == true
         @test f.boolValue == false
+        @test convert(NSNumber, true) == t
+        @test convert(NSNumber, false) == f
     end
 
     @testset "int" begin
@@ -234,6 +236,8 @@ end
         @test i != j
         @test i.intValue == 123
         @test j.intValue == 456
+        @test convert(NSNumber, 123) == i
+        @test convert(NSNumber, 456) == j
     end
 end
 
