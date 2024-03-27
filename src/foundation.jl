@@ -138,6 +138,7 @@ let
     i = findfirst(x->x[1] == T, NSNumberTypes)
     method = NSNumberTypes[i][2]
     @eval NSNumber(x::$T) = NSNumber(@objc [NSNumber $method:x::$T]::id{NSNumber})
+    @eval Base.convert(::Type{NSNumber}, x::$T) = NSNumber(x)
   end
 end
 
