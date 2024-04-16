@@ -95,7 +95,7 @@ property macros:
   @autoproperty someProperty::id{DstTyp}
 
   # sometimes you may want to convert to a different type
-  @autoproperty someStringProperty::id{NSString} typ=String
+  @autoproperty someStringProperty::id{NSString} type=String
 
   # and finally, if more control is needed, just do it yourselv:
   @getproperty someComplexProperty function(obj)
