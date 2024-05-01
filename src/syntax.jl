@@ -131,9 +131,17 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
             end
             Core.println(io, "]")
         end
-        ret = ccall(:objc_msgSend, $(esc(rettyp)),
-                    (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                    class, sel, $(map(esc, argvals)...))
+        ret = if $ABI.use_stret($(esc(rettyp)))
+            box = Ref{$(esc(rettyp))}()
+            ccall(:objc_msgSend, Nothing,
+                  (Ptr{$(esc(rettyp))}, Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+                  box, class, sel, $(map(esc, argvals)...))
+            box[]
+        else
+            ccall(:objc_msgSend, $(esc(rettyp)),
+                  (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+                  class, sel, $(map(esc, argvals)...))
+        end
         @static if $tracing
             if $(esc(rettyp)) !== Nothing
               Core.print(io, "  ")
@@ -160,9 +168,17 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals)
             end
             Core.println(io, "]")
         end
-        ret = ccall(:objc_msgSend, $(esc(rettyp)),
-                    (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                    $instance, sel, $(map(esc, argvals)...))
+        ret = if $ABI.use_stret($(esc(rettyp)))
+            box = Ref{$(esc(rettyp))}()
+            ccall(:objc_msgSend_stret, Nothing,
+                  (Ptr{$(esc(rettyp))}, id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+                  box, $instance, sel, $(map(esc, argvals)...))
+            box[]
+        else
+            ccall(:objc_msgSend, $(esc(rettyp)),
+                  (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+                  $instance, sel, $(map(esc, argvals)...))
+        end
         @static if $tracing
             if $(esc(rettyp)) !== Nothing
               Core.print(io, "  ")
