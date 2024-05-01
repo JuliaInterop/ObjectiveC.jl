@@ -547,4 +547,37 @@ macro autoreleasepool(ex...)
   end
 end
 
+
+export NSProcessInfo, NSOperatingSystemVersion
+
+struct NSOperatingSystemVersion
+    majorVersion::NSInteger
+    minorVersion::NSInteger
+    patchVersion::NSInteger
+end
+
+@objcwrapper NSProcessInfo <: NSObject
+
+@objcproperties NSProcessInfo begin
+    # process information
+    @autoproperty arguments::id{NSArray}
+    @autoproperty environment::id{NSDictionary}
+    @autoproperty globallyUniqueString::id{NSString}
+    @autoproperty macCatalystApp::Bool
+    @autoproperty iosAppOnMac::Bool
+    @autoproperty processIdentifier::Cint
+    @autoproperty processName::id{NSString}
+
+    # user information
+    @autoproperty userName::id{NSString}
+    @autoproperty fullUserName::id{NSString}
+
+    # host information
+    @autoproperty hostName::id{NSString}
+    @autoproperty operatingSystemVersionString::id{NSString}
+    @autoproperty operatingSystemVersion::NSOperatingSystemVersion
+end
+
+NSProcessInfo() = NSProcessInfo(@objc [NSProcessInfo processInfo]::id{NSProcessInfo})
+
 end

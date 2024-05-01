@@ -257,6 +257,14 @@ end
     @test file != url
 end
 
+@testset "NSProcessInfo" begin
+    info = NSProcessInfo()
+
+    @test info.processIdentifier == ccall("getpid", Cint, ())
+
+    @test info.operatingSystemVersion isa NSOperatingSystemVersion
+end
+
 end
 
 end
