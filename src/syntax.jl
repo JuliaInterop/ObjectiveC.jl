@@ -18,12 +18,15 @@ function flatvcat(ex::Expr)
   return flat
 end
 
-function objcm(ex)
+function objcm(mod, ex)
     # handle a single call, [dst method: param::typ]::typ
 
     # parse the call return type
     Meta.isexpr(ex, :(::)) || callerror("missing return type")
     call, rettyp = ex.args
+
+    # we need the return type at macro definition time in order to determine the ABI
+    rettyp = Base.eval(mod, rettyp)::Type
 
     # parse the call
     if Meta.isexpr(call, :vcat)
@@ -89,7 +92,7 @@ function objcm(ex)
         if value isa Expr
             # possibly dealing with a nested expression, so recurse
             quote
-                obj = $(objcm(obj))
+                obj = $(objcm(mod, obj))
                 $(instance_message(:obj, esc(typ), sel, rettyp, argtyps, argvals))
             end
         else
@@ -131,19 +134,24 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
             end
             Core.println(io, "]")
         end
-        ret = if $ABI.use_stret($(esc(rettyp)))
-            box = Ref{$(esc(rettyp))}()
-            ccall(:objc_msgSend, Nothing,
-                  (Ptr{$(esc(rettyp))}, Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                  box, class, sel, $(map(esc, argvals)...))
-            box[]
-        else
-            ccall(:objc_msgSend, $(esc(rettyp)),
-                  (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                  class, sel, $(map(esc, argvals)...))
-        end
+        ret = $(
+            if ABI.use_stret(rettyp)
+                # we follow Julia's ABI implementation, so ccall will handle the sret box
+                :(
+                    ccall(:objc_msgSend_stret, $rettyp,
+                          (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+                          class, sel, $(map(esc, argvals)...))
+                )
+            else
+                :(
+                    ccall(:objc_msgSend, $rettyp,
+                          (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+                          class, sel, $(map(esc, argvals)...))
+                )
+            end
+        )
         @static if $tracing
-            if $(esc(rettyp)) !== Nothing
+            if $rettyp !== Nothing
               Core.print(io, "  ")
               render(io, ret)
               Core.println(io)
@@ -168,19 +176,24 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals)
             end
             Core.println(io, "]")
         end
-        ret = if $ABI.use_stret($(esc(rettyp)))
-            box = Ref{$(esc(rettyp))}()
-            ccall(:objc_msgSend_stret, Nothing,
-                  (Ptr{$(esc(rettyp))}, id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                  box, $instance, sel, $(map(esc, argvals)...))
-            box[]
-        else
-            ccall(:objc_msgSend, $(esc(rettyp)),
-                  (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                  $instance, sel, $(map(esc, argvals)...))
-        end
+        ret = $(
+            if ABI.use_stret(rettyp)
+                # we follow Julia's ABI implementation, so ccall will handle the sret box
+                :(
+                    ccall(:objc_msgSend_stret, $rettyp,
+                          (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+                          $instance, sel, $(map(esc, argvals)...))
+                )
+            else
+                :(
+                    ccall(:objc_msgSend, $rettyp,
+                          (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+                          $instance, sel, $(map(esc, argvals)...))
+                )
+            end
+        )
         @static if $tracing
-            if $(esc(rettyp)) !== Nothing
+            if $rettyp !== Nothing
               Core.print(io, "  ")
               render(io, ret)
               Core.println(io)
@@ -191,7 +204,7 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals)
 end
 
 macro objc(ex)
-  objcm(ex)
+  objcm(__module__, ex)
 end
 
 
