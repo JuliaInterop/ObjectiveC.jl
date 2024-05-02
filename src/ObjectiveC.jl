@@ -24,6 +24,7 @@ include("primitives.jl")
 include("methods.jl")
 
 # Calls & Properties
+include("abi.jl")
 include("syntax.jl")
 
 # API wrappers
