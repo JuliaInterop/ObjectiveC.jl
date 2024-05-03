@@ -164,11 +164,11 @@ function classify(dt)
     return cl
 end
 
-@generated use_stret(::Type{T}) where T = classify(T).is_memory
+use_stret(::Type{T}) where T = classify(T).is_memory
 
 elseif Sys.ARCH == :x86
 
-@generated function use_stret(::Type{T}) where T
+function use_stret(::Type{T}) where T
     if sizeof(T) == 0
         return false
     elseif T == ComplexF32 || (isprimitivetype(T) && sizeof(T) <= 8)
