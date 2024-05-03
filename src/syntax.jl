@@ -422,8 +422,13 @@ macro objcproperties(typ, ex)
             srcTyp === nothing && propertyerror("missing type for property $property")
             dstTyp = get(kwargs, :type, nothing)
 
+            # for getproperty, we call the code generator directly to avoid the need to
+            # escape the return type, breaking `@objc`s ability to look up the type in the
+            # caller's module and decide on the appropriate ABI. that necessitates use of
+            # :hygienic-scope to handle the mix of esc/hygienic code.
+            getproperty_ex = objcm(__module__, :([object::id{$(esc(typ))} $property]::$srcTyp))
             getproperty_ex = quote
-                value = @objc [object::id{$(esc(typ))} $property]::$(esc(srcTyp))
+                value = $(Expr(:var"hygienic-scope", getproperty_ex, @__MODULE__, __source__))
             end
 
             # if we're dealing with a typed object pointer, do a nil check and create an object
