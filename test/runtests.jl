@@ -239,6 +239,34 @@ end
         @test convert(NSNumber, 123) == i
         @test convert(NSNumber, 456) == j
     end
+
+    @testset "decimal" begin
+        i = NSNumber(3.14)
+        @test i.decimalValue == NSDecimal(NSDecimalNumber("3.14"))
+    end
+end
+
+@testset "NSDecimal" begin
+    @test zero(NSDecimalNumber) == zero(NSDecimalNumber)
+    @test zero(NSDecimalNumber) != one(NSDecimalNumber)
+    @test zero(NSDecimalNumber) < one(NSDecimalNumber)
+    @test one(NSDecimalNumber) > zero(NSDecimalNumber)
+    @test one(NSDecimalNumber) != NaNDecimalNumber()
+    @test one(NSDecimalNumber) > typemin(NSDecimalNumber)
+    @test one(NSDecimalNumber) < typemax(NSDecimalNumber)
+
+    # –12.345, expressed as 12345x10^–3: mantissa 12345; exponent –3; isNegative YES
+    num = NSDecimalNumber(mantissa=12345, exponent=-3, negative=true)
+    @test num == NSDecimalNumber("-12.345")
+
+    # conversion to raw NSDecimal
+    dec = NSDecimal(num)
+    @test dec.mantissa == 12345
+    @test dec.exponent == -3
+    @test dec.isNegative
+
+    # conversion back to NSDecimalNumber
+    @test NSDecimalNumber(dec) == num
 end
 
 @testset "NSURL" begin

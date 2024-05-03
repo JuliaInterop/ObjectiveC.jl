@@ -92,6 +92,51 @@ NSValue(x::Union{NSRange,UnitRange}) =
 # ...
 
 
+export NSDecimal
+
+const NSDecimalMaxSize = 8
+struct NSDecimal
+    # an integer from –128 through 127
+    exponent::Int8
+
+    # unsigned int _length:4;
+    #   length == 0 && isNegative -> NaN
+    # unsigned int _isNegative:1;
+    # unsigned int _isCompact:1;
+    # unsigned int _reserved:18
+    flags::UInt8
+    _reserved1::UInt8
+    _reserved2::UInt8
+
+    # a decimal integer up to 38 digits long
+    mantissa::NTuple{NSDecimalMaxSize, Cushort}
+end
+
+function Base.getproperty(obj::NSDecimal, sym::Symbol)
+    if sym == :length
+        obj.flags & 0xf
+    elseif sym == :isNegative
+        Bool(obj.flags >> 4 & 1)
+    elseif sym == :isCompact
+        obj.flags >> 5 & 1
+    elseif sym == :mantissa
+        reinterpret(UInt128, getfield(obj, :mantissa))
+    else
+        getfield(obj, sym)
+    end
+end
+
+Base.isnan(dec::NSDecimal) = dec.length == 0 && dec.isNegative
+
+function Base.show(io::IO, dec::NSDecimal)
+  if isnan(dec)
+    print(io, "NaN")
+  else
+    print(io, "NSDecimal(", dec.mantissa, "e", dec.exponent, ")")
+  end
+end
+
+
 export NSNumber
 
 @objcwrapper NSNumber <: NSObject
@@ -99,7 +144,7 @@ export NSNumber
 @objcproperties NSNumber begin
     @autoproperty boolValue::Bool
     @autoproperty charValue::Cchar
-    #@autoproperty decimalValue::id{NSDecimalNumber}
+    @autoproperty decimalValue::NSDecimal
     @autoproperty doubleValue::Cdouble
     @autoproperty floatValue::Cfloat
     @autoproperty intValue::Cint
@@ -141,6 +186,57 @@ let
     @eval Base.convert(::Type{NSNumber}, x::$T) = NSNumber(x)
   end
 end
+
+
+export NSDecimalNumber, NaNDecimalNumber
+
+@objcwrapper NSDecimalNumber <: NSNumber
+@objcproperties NSDecimalNumber begin
+    #@autoproperty defaultBehavior::NSDecimalNumberBehaviors
+    @autoproperty decimalValue::NSDecimal
+    @autoproperty doubleValue::Float64
+end
+
+# constructors
+NSDecimalNumber(dec::NSDecimal) =
+    NSDecimalNumber(@objc [NSDecimalNumber decimalNumberWithDecimal:dec::NSDecimal]::id{NSDecimalNumber})
+NSDecimalNumber(str::Union{String,NSString}) =
+    NSDecimalNumber(@objc [NSDecimalNumber decimalNumberWithString:str::id{NSString}]::id{NSDecimalNumber})
+NSDecimalNumber(; mantissa, exponent, negative) =
+    NSDecimalNumber(@objc [NSDecimalNumber decimalNumberWithMantissa:mantissa::Culonglong
+                                                            exponent:exponent::Cshort
+                                                          isNegative:negative::Bool]::id{NSDecimalNumber})
+
+# conversions
+Float64(dec::NSDecimal) = NSDecimalNumber(dec).doubleValue
+NSDecimal(dec::NSDecimalNumber) = dec.decimalValue
+
+# fixed values
+Base.zero(::Type{NSDecimalNumber}) =
+    NSDecimalNumber(@objc [NSDecimalNumber zero]::id{NSDecimalNumber})
+Base.one(::Type{NSDecimalNumber}) =
+    NSDecimalNumber(@objc [NSDecimalNumber one]::id{NSDecimalNumber})
+Base.typemin(::Type{NSDecimalNumber}) =
+    NSDecimalNumber(@objc [NSDecimalNumber minimumDecimalNumber]::id{NSDecimalNumber})
+Base.typemax(::Type{NSDecimalNumber}) =
+    NSDecimalNumber(@objc [NSDecimalNumber maximumDecimalNumber]::id{NSDecimalNumber})
+NaNDecimalNumber() =
+    NSDecimalNumber(@objc [NSDecimalNumber notANumber]::id{NSDecimalNumber})
+
+# output
+Base.string(number::NSDecimalNumber) = number.description
+Base.show(io::IO, number::NSDecimalNumber) = print(io, "NSDecimalNumber(", number.description, ")")
+
+# comparisons
+@cenum NSComparisonResult::NSInteger begin
+    NSOrderedAscending = -1
+    NSOrderedSame = 0
+    NSOrderedDescending = 1
+end
+compare(a::NSDecimalNumber, b::NSDecimalNumber) =
+    @objc [a::id{NSDecimalNumber} compare:b::id{NSDecimalNumber}]::NSComparisonResult
+Base.isequal(a::NSDecimalNumber, b::NSDecimalNumber) = compare(a, b) == NSOrderedSame
+Base.isless(a::NSDecimalNumber, b::NSDecimalNumber) = compare(a, b) == NSOrderedAscending
 
 
 export NSString
