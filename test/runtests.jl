@@ -18,7 +18,7 @@ using ObjectiveC
     empty_str = @objc [NSString string]::id{Object}
     @objc [obj::id stringByReplacingOccurrencesOfString:empty_str::id{Object} withString:empty_str::id{Object}]::id{Object}
 
-    # chained class + install calls
+    # chained class + instance calls
     @objc [[NSString alloc]::id{Object} init]::id{Object}
 end
 
