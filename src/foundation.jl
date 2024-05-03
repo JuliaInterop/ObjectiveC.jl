@@ -120,7 +120,12 @@ function Base.getproperty(obj::NSDecimal, sym::Symbol)
     elseif sym == :isCompact
         obj.flags >> 5 & 1
     elseif sym == :mantissa
-        reinterpret(UInt128, getfield(obj, :mantissa))
+        bits = getfield(obj, :mantissa)
+        result = UInt128(0)
+        for i in 1:obj.length
+            result |= UInt128(bits[i]) << (16*(i-1))
+        end
+        result
     else
         getfield(obj, sym)
     end
