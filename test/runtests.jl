@@ -47,11 +47,11 @@ end
     typestr = ObjectiveC.encodetype(types...)
 
     @testset "simple" begin
-        function addone(x::T) where T
+        function addone(self, x::T) where T
             return x + one(T)
         end
         @assert sizeof(addone) == 0
-        block = Foundation.@objcblock(addone, Cint, (Cint,))
+        block = Foundation.@objcblock(addone, Cint, (id{Object}, Cint,))
 
         imp = ccall(:imp_implementationWithBlock, Ptr{Cvoid}, (id{Foundation.NSBlock},), block)
         @assert ccall(:class_addMethod, Bool,
@@ -65,11 +65,11 @@ end
 
     @testset "closure" begin
         val = Cint(2)
-        function addbox(x::T) where T
+        function addbox(self, x::T) where T
             return x + val
         end
         @assert sizeof(addbox) != 0
-        block = @objcblock(addbox, Cint, (Cint,))
+        block = @objcblock(addbox, Cint, (id{Object}, Cint,))
 
         imp = ccall(:imp_implementationWithBlock, Ptr{Cvoid}, (id{Foundation.NSBlock},), block)
         @assert ccall(:class_addMethod, Bool,
@@ -88,7 +88,7 @@ end
         end
         block = @objcasyncblock(cond)
 
-        types = (Nothing, Object, Selector)
+        types = (Nothing, Selector)
         typestr = ObjectiveC.encodetype(types...)
 
         imp = ccall(:imp_implementationWithBlock, Ptr{Cvoid}, (id{Foundation.NSBlock},), block)

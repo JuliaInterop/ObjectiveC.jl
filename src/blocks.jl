@@ -95,7 +95,7 @@ function JuliaBlock(trampoline, callable)
     return block
 end
 
-function julia_block_trampoline(_block, _self, args...)
+function julia_block_trampoline(_block, args...)
     block = unsafe_load(_block)
     nsblock = NSBlock(reinterpret(id{NSBlock}, _block))
 
@@ -124,7 +124,7 @@ macro objcblock(callable, rettyp, argtyps)
         # create a trampoline to forward all args to the user-provided callable.
         # this is a simple cfunction, so doesn't need to be rooted.
         trampoline = @cfunction($julia_block_trampoline, $(esc(rettyp)),
-                                (Ptr{JuliaBlock}, id{Object}, $(esc(argtyps))...))
+                                (Ptr{JuliaBlock}, $(esc(argtyps))...))
 
         # create an Objective-C block on the stack that wraps the trampoline
         block = JuliaBlock(trampoline, $(esc(callable)))
@@ -168,7 +168,7 @@ function Foundation.NSBlock(block::JuliaAsyncBlock)
     end
 end
 
-function julia_async_block_trampoline(_block, _self)
+function julia_async_block_trampoline(_block)
     block = unsafe_load(_block)
     # note that this requires the JuliaAsyncBlock structure to be immutable without any
     # contained mutable references (i.e. no AsyncCondition), or the load would allocate.
@@ -191,7 +191,7 @@ function JuliaAsyncBlock(cond)
 
     # create a trampoline to wake libuv with the user-provided condition
     trampoline = @cfunction(julia_async_block_trampoline, Nothing,
-                            (Ptr{JuliaAsyncBlock}, id{Object}))
+                            (Ptr{JuliaAsyncBlock},))
 
     # set-up the block data structures
     desc_ptr = Base.unsafe_convert(Ptr{Cvoid}, julia_async_block_descriptor)
