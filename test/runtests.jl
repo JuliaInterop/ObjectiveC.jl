@@ -69,7 +69,7 @@ end
             return x + val
         end
         @assert sizeof(addbox) != 0
-        block = @objcblock(addbox, Cint, (Ptr{Object}, Cint,))
+        block = @objcblock(addbox, Cint, (id{Object}, Cint,))
 
         imp = ccall(:imp_implementationWithBlock, Ptr{Cvoid}, (id{Foundation.NSBlock},), block)
         @assert ccall(:class_addMethod, Bool,
