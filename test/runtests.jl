@@ -51,7 +51,7 @@ end
             return x + one(T)
         end
         @assert sizeof(addone) == 0
-        block = Foundation.@objcblock(addone, Cint, (Ptr{Object}, Cint,))
+        block = Foundation.@objcblock(addone, Cint, (id{Object}, Cint,))
 
         imp = ccall(:imp_implementationWithBlock, Ptr{Cvoid}, (id{Foundation.NSBlock},), block)
         @assert ccall(:class_addMethod, Bool,
