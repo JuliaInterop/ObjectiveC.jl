@@ -512,12 +512,10 @@ macro objcproperties(typ, ex)
       end
 
       # finally, call our parent's `getproperty`
-      final = :(invoke(getproperty, Tuple{supertype($(esc(typ))), Symbol}, object, field))
-      if VERSION >= v"1.8"
-        push!(current.args, :(@inline $final))
-      else
-        push!(current.args, :($final))
-      end
+      final = :(@inline invoke(getproperty,
+                               Tuple{supertype($(esc(typ))), Symbol},
+                               object, field))
+      push!(current.args, final)
       getproperties_ex = quote
           # XXX: force const-prop on field, without inlining everything?
           function Base.getproperty(object::$(esc(typ)), field::Symbol)
@@ -543,14 +541,10 @@ macro objcproperties(typ, ex)
       end
 
       # finally, call our parent's `setproperty!`
-      final = :(invoke(setproperty!,
-                       Tuple{supertype($(esc(typ))), Symbol, Any},
-                       object, field, value))
-      if VERSION >= v"1.8"
-        push!(current.args, :(@inline $final))
-      else
-        push!(current.args, :($final))
-      end
+      final = :(@inline invoke(setproperty!,
+                               Tuple{supertype($(esc(typ))), Symbol, Any},
+                               object, field, value))
+      push!(current.args, final)
       setproperties_ex = quote
           # XXX: force const-prop on field, without inlining everything?
           function Base.setproperty!(object::$(esc(typ)), field::Symbol, value::Any)
