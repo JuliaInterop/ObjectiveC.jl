@@ -121,6 +121,51 @@ function render_c_arg(io, obj, typ)
   end
 end
 
+# ensure that the GC can run during a ccall. this is only safe if callbacks
+# into Julia transition back to GC-unsafe, which is the case on Julia 1.10+.
+#
+# doing so is tricky, because no GC operations are allowed after the transition,
+# meaning we have to do our own argument conversion instead of relying on ccall.
+#
+# TODO: replace with JuliaLang/julia#49933 once merged
+function make_gcsafe(ex)
+  # decode the ccall
+  if !Meta.isexpr(ex, :call) || ex.args[1] != :ccall
+    error("Can only make ccall expressions GC-safe")
+  end
+  target = ex.args[2]
+  rettyp = ex.args[3]
+  argtypes = ex.args[4].args
+  args = ex.args[5:end]
+
+  code = quote
+  end
+
+  # assign argument values to variables
+  vars = [Symbol("arg$i") for i in 1:length(args)]
+  for (var, arg) in zip(vars, args)
+    push!(code.args, :($var = $arg))
+  end
+
+  # convert the arguments
+  converted = [Symbol("converted_arg$i") for i in 1:length(args)]
+  for (converted, argtyp, var) in zip(converted, argtypes, vars)
+    push!(code.args, :($converted = Base.unsafe_convert($argtyp, Base.cconvert($argtyp, $var))))
+  end
+
+  # emit a gcsafe ccall
+  append!(code.args, (quote
+    GC.@preserve $(vars...) begin
+      gc_state = ccall(:jl_gc_safe_enter, Int8, ())
+      ret = ccall($target, $rettyp, ($(argtypes...),), $(converted...))
+      ccall(:jl_gc_safe_leave, Cvoid, (Int8,), gc_state)
+      ret
+    end
+  end).args)
+
+  return code
+end
+
 function class_message(class_name, msg, rettyp, argtyps, argvals)
     quote
         class = Class($(String(class_name)))
@@ -136,18 +181,19 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
         end
         ret = $(
             if ABI.use_stret(rettyp)
-                # we follow Julia's ABI implementation, so ccall will handle the sret box
-                :(
+                # we follow Julia's ABI implementation,
+                # so ccall will handle the sret box
+                make_gcsafe(:(
                     ccall(:objc_msgSend_stret, $rettyp,
                           (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
                           class, sel, $(map(esc, argvals)...))
-                )
+                ))
             else
-                :(
+                make_gcsafe(:(
                     ccall(:objc_msgSend, $rettyp,
                           (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
                           class, sel, $(map(esc, argvals)...))
-                )
+                ))
             end
         )
         @static if $tracing
@@ -178,18 +224,19 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals)
         end
         ret = $(
             if ABI.use_stret(rettyp)
-                # we follow Julia's ABI implementation, so ccall will handle the sret box
-                :(
+                # we follow Julia's ABI implementation,
+                # so ccall will handle the sret box
+                make_gcsafe(:(
                     ccall(:objc_msgSend_stret, $rettyp,
                           (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
                           $instance, sel, $(map(esc, argvals)...))
-                )
+                ))
             else
-                :(
+                make_gcsafe(:(
                     ccall(:objc_msgSend, $rettyp,
                           (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
                           $instance, sel, $(map(esc, argvals)...))
-                )
+                ))
             end
         )
         @static if $tracing
@@ -512,12 +559,10 @@ macro objcproperties(typ, ex)
       end
 
       # finally, call our parent's `getproperty`
-      final = :(invoke(getproperty, Tuple{supertype($(esc(typ))), Symbol}, object, field))
-      if VERSION >= v"1.8"
-        push!(current.args, :(@inline $final))
-      else
-        push!(current.args, :($final))
-      end
+      final = :(@inline invoke(getproperty,
+                               Tuple{supertype($(esc(typ))), Symbol},
+                               object, field))
+      push!(current.args, final)
       getproperties_ex = quote
           # XXX: force const-prop on field, without inlining everything?
           function Base.getproperty(object::$(esc(typ)), field::Symbol)
@@ -543,14 +588,10 @@ macro objcproperties(typ, ex)
       end
 
       # finally, call our parent's `setproperty!`
-      final = :(invoke(setproperty!,
-                       Tuple{supertype($(esc(typ))), Symbol, Any},
-                       object, field, value))
-      if VERSION >= v"1.8"
-        push!(current.args, :(@inline $final))
-      else
-        push!(current.args, :($final))
-      end
+      final = :(@inline invoke(setproperty!,
+                               Tuple{supertype($(esc(typ))), Symbol, Any},
+                               object, field, value))
+      push!(current.args, final)
       setproperties_ex = quote
           # XXX: force const-prop on field, without inlining everything?
           function Base.setproperty!(object::$(esc(typ)), field::Symbol, value::Any)
