@@ -19,6 +19,25 @@ function enable_tracing(enabled::Bool)
 end
 const tracing = @load_preference("tracing", false)::Bool
 
+@static if Sys.isapple()
+function macos_version()
+    size = Ref{Csize_t}()
+    err = @ccall sysctlbyname("kern.osproductversion"::Cstring, C_NULL::Ptr{Cvoid}, size::Ptr{Csize_t},
+                              C_NULL::Ptr{Cvoid}, 0::Csize_t)::Cint
+    Base.systemerror("sysctlbyname", err != 0)
+
+    osrelease = Vector{UInt8}(undef, size[])
+    err = @ccall sysctlbyname("kern.osproductversion"::Cstring, osrelease::Ptr{Cvoid}, size::Ptr{Csize_t},
+                              C_NULL::Ptr{Cvoid}, 0::Csize_t)::Cint
+    Base.systemerror("sysctlbyname", err != 0)
+
+    verstr = view(String(osrelease), 1:size[]-1)
+    parse(VersionNumber, verstr)
+end
+else
+    macos_version() = v"0"
+end
+
 # Types & Reflection
 include("primitives.jl")
 include("methods.jl")

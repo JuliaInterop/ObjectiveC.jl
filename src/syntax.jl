@@ -415,6 +415,8 @@ contains a series of property declarations:
     check, returning `nothing` if the check fails).
   - `setter`: specifies the name of the Objective-C setter method. Without this, no
     `setproperty!` definition will be generated.
+  - `minver`: specifies the minimum macOS version supported by the property. Will only define
+    the property if the compatibility is met.
 - `@getproperty myProperty function(obj) ... end`: define a custom getter for the property.
   The function should take a single argument `obj`, which is the object that the property is
   being accessed on. The function should return the property value.
@@ -427,6 +429,7 @@ macro objcproperties(typ, ex)
     isa(typ, Symbol) || propertyerror("expected a type name")
     Meta.isexpr(ex, :block) || propertyerror("expected a block of property declarations")
 
+    unsupportednames = Set{Symbol}()
     propertynames = Set{Symbol}()
     read_properties = Dict{Symbol,Expr}()
     write_properties = Dict{Symbol,Expr}()
@@ -461,7 +464,20 @@ macro objcproperties(typ, ex)
         else
             propertyerror("invalid property specification $(property_arg)")
         end
-        push!(propertynames, property)
+
+        # This complexity
+        supported = if haskey(kwargs, :minver)
+          (VersionNumber(get(kwargs, :minver, "0")) < macos_version()) && property ∉ unsupportednames
+        else
+          true
+        end
+        if supported
+          push!(propertynames, property)
+        else
+          push!(unsupportednames, property)
+          delete!(propertynames, property)
+          continue
+        end
 
         # handle the various property declarations. this assumes :object and :value symbol
         # names for the arguments to `getproperty` and `setproperty!`, as generated below.
