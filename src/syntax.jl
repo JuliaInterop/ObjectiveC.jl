@@ -465,7 +465,7 @@ macro objcproperties(typ, ex)
             propertyerror("invalid property specification $(property_arg)")
         end
 
-        # This complexity
+        # This complexity is so not definitions are created even if there is a @setproperty/@getproperty
         supported = if haskey(kwargs, :minver)
           (VersionNumber(get(kwargs, :minver, "0")) < macos_version()) && property ∉ unsupportednames
         else
