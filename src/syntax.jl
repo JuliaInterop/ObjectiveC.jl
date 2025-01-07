@@ -431,27 +431,41 @@ macro objcproperties(typ, ex)
     read_properties = Dict{Symbol,Expr}()
     write_properties = Dict{Symbol,Expr}()
 
-    for arg in ex.args
-        isa(arg, LineNumberNode) && continue
-        Meta.isexpr(arg, :macrocall) || propertyerror("invalid property declaration $arg")
+    # collect property declarations
+    properties = []
+    function process_property(ex)
+        isa(ex, LineNumberNode) && return
+        Meta.isexpr(ex, :macrocall) || propertyerror("invalid property declaration $ex")
 
         # split the contained macrocall into its parts
-        cmd = arg.args[1]
+        cmd = ex.args[1]
+        args = []
         kwargs = Dict()
-        positionals = []
-        for arg in arg.args[2:end]
+        for arg in ex.args[2:end]
             isa(arg, LineNumberNode) && continue
             if isa(arg, Expr) && arg.head == :(=)
                 kwargs[arg.args[1]] = arg.args[2]
             else
-                push!(positionals, arg)
+                push!(args, arg)
             end
         end
 
+        # if we're dealing with `@static`, so recurse into the block
+        # TODO: liberally support all unknown macros?
+        if cmd == Symbol("@static")
+            ex = macroexpand(__module__, ex; recursive=false)
+            process_property.(ex.args)
+        else
+            push!(properties, (; cmd, args, kwargs))
+        end
+    end
+    process_property.(ex.args)
+
+    for (cmd, args, kwargs) in properties
         # there should only be a single positional argument,
         # containing the property name (and optionally its type)
-        length(positionals) >= 1 || propertyerror("$cmd requires a positional argument")
-        property_arg = popfirst!(positionals)
+        length(args) >= 1 || propertyerror("$cmd requires a positional argument")
+        property_arg = popfirst!(args)
         if property_arg isa Symbol
             property = property_arg
             srcTyp = nothing
@@ -509,14 +523,14 @@ macro objcproperties(typ, ex)
             end
         elseif cmd == Symbol("@getproperty")
             haskey(read_properties, property) && propertyerror("duplicate property $property")
-            function_arg = popfirst!(positionals)
+            function_arg = popfirst!(args)
             read_properties[property] = quote
                 f = $(esc(function_arg))
                 f(object)
             end
         elseif cmd == Symbol("@setproperty!")
             haskey(write_properties, property) && propertyerror("duplicate property $property")
-            function_arg = popfirst!(positionals)
+            function_arg = popfirst!(args)
             write_properties[property] = quote
                 f = $(esc(function_arg))
                 f(object, value)
@@ -525,7 +539,7 @@ macro objcproperties(typ, ex)
             propertyerror("unrecognized property declaration $cmd")
         end
 
-        isempty(positionals) || propertyerror("too many positional arguments")
+        isempty(args) || propertyerror("too many positional arguments")
     end
 
     # generate Base.propertynames definition
