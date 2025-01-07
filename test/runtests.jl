@@ -36,6 +36,61 @@ end
     @test_throws UndefRefError TestNSString(nil)
 end
 
+@objcproperties TestNSString begin
+    @autoproperty length::Culong
+    @static if true
+        @autoproperty UTF8String::Ptr{Cchar}
+    end
+    @static if false
+        @autoproperty NonExistingProperty::Cint
+    end
+end
+@objcwrapper TestNSMutableString <: TestNSString
+@objcproperties TestNSMutableString begin
+    @setproperty! string function(obj, val)
+        @objc [obj::id{TestNSMutableString} setString:val::id{TestNSString}]::Nothing
+    end
+end
+@objcwrapper TestNSOperationQueue <: Object
+@objcproperties TestNSOperationQueue begin
+    @autoproperty name::id{TestNSString} setter=setName
+end
+@testset "@objcproperties" begin
+    # immutable object with only read properties
+    str1 = "foo"
+    immut = TestNSString(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestNSString})
+
+    @test :length in propertynames(immut)
+    @test :UTF8String in propertynames(immut)
+    @test :NonExistingProperty ∉ propertynames(immut)
+
+    @test immut.length == length(str1)
+    @test unsafe_string(immut.UTF8String) == str1
+
+    # mutable object with a write property
+    str2 = "barbar"
+    mut = TestNSMutableString(@objc [NSMutableString stringWithUTF8String:str2::Ptr{UInt8}]::id{TestNSMutableString})
+
+    @test :length in propertynames(mut)
+    @test :UTF8String in propertynames(mut)
+    @test :string in propertynames(mut)
+    @test :NonExistingProperty ∉ propertynames(mut)
+
+    @test mut.length == length(str2)
+    @test unsafe_string(mut.UTF8String) == str2
+
+    mut.string = immut
+    @test mut.length == length(str1)
+    @test unsafe_string(mut.UTF8String) == str1
+
+    # mutable object using @autoproperty to generate a setter
+    queue = TestNSOperationQueue(@objc [NSOperationQueue new]::id{TestNSOperationQueue})
+    @test queue.name isa TestNSString
+    @test unsafe_string(queue.name.UTF8String) != str1
+    queue.name = immut
+    @test unsafe_string(queue.name.UTF8String) == str1
+end
+
 @testset "@objc blocks" begin
     # create a dummy class we'll register our blocks with
     # (no need to use @objcwrapper as we're not constructing an id{BlockWrapper})

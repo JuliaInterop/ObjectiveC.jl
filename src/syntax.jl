@@ -454,7 +454,9 @@ macro objcproperties(typ, ex)
         # TODO: liberally support all unknown macros?
         if cmd == Symbol("@static")
             ex = macroexpand(__module__, ex; recursive=false)
-            process_property.(ex.args)
+            if ex !== nothing
+                process_property.(ex.args)
+            end
         else
             push!(properties, (; cmd, args, kwargs))
         end
