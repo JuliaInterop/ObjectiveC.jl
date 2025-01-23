@@ -494,9 +494,9 @@ macro objcproperties(typ, ex)
 
             getterproperty = if haskey(kwargs, :getter)
                 kwargs[:getter]
-              else
+            else
                 property
-              end
+            end
             getproperty_ex = objcm(__module__, :([object::id{$(esc(typ))} $getterproperty]::$srcTyp))
             getproperty_ex = quote
                 value = $(Expr(:var"hygienic-scope", getproperty_ex, @__MODULE__, __source__))

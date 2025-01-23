@@ -245,11 +245,11 @@ Base.isless(a::NSDecimalNumber, b::NSDecimalNumber) = compare(a, b) == NSOrdered
 
 export NSCopying
 
-@objcwrapper immutable=false NSCopying <: NSObject
+@objcwrapper immutable = false NSCopying <: NSObject
 
 export NSData
 
-@objcwrapper immutable=false NSData <: NSObject
+@objcwrapper immutable = false NSData <: NSObject
 
 export NSString
 
