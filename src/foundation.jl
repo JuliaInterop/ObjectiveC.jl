@@ -243,6 +243,13 @@ compare(a::NSDecimalNumber, b::NSDecimalNumber) =
 Base.isequal(a::NSDecimalNumber, b::NSDecimalNumber) = compare(a, b) == NSOrderedSame
 Base.isless(a::NSDecimalNumber, b::NSDecimalNumber) = compare(a, b) == NSOrderedAscending
 
+export NSCopying
+
+@objcwrapper immutable=false NSCopying <: NSObject
+
+export NSData
+
+@objcwrapper immutable=false NSData <: NSObject
 
 export NSString
 
