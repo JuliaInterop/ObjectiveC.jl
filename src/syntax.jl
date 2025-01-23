@@ -415,6 +415,8 @@ contains a series of property declarations:
     check, returning `nothing` if the check fails).
   - `setter`: specifies the name of the Objective-C setter method. Without this, no
     `setproperty!` definition will be generated.
+  - `getter`: specifies the name of the Objective-C getter method. Without this, the
+    getter method is assumed to be identical to the property
 - `@getproperty myProperty function(obj) ... end`: define a custom getter for the property.
   The function should take a single argument `obj`, which is the object that the property is
   being accessed on. The function should return the property value.
@@ -489,7 +491,13 @@ macro objcproperties(typ, ex)
             # escape the return type, breaking `@objc`s ability to look up the type in the
             # caller's module and decide on the appropriate ABI. that necessitates use of
             # :hygienic-scope to handle the mix of esc/hygienic code.
-            getproperty_ex = objcm(__module__, :([object::id{$(esc(typ))} $property]::$srcTyp))
+
+            getterproperty = if haskey(kwargs, :getter)
+                kwargs[:getter]
+              else
+                property
+              end
+            getproperty_ex = objcm(__module__, :([object::id{$(esc(typ))} $getterproperty]::$srcTyp))
             getproperty_ex = quote
                 value = $(Expr(:var"hygienic-scope", getproperty_ex, @__MODULE__, __source__))
             end
