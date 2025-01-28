@@ -7,6 +7,32 @@ using Test
     @test ObjectiveC.is_macos(ObjectiveC.macos_version())
 end
 
+# Availability
+@objcwrapper availability = v"1000" TestWrapperAvail <: Object
+@objcwrapper availability = v"0" TestPropAvail <: Object
+@objcproperties TestPropAvail begin
+    @autoproperty length::Culong
+    @autoproperty UTF8String::Ptr{Cchar} availability = v"0"
+    @autoproperty UnavailableProperty::Cint availability = v"1000"
+end
+@testset "availability" begin
+    # wrapper
+    fakeidwrap = id{TestWrapperAvail}(1)
+    @test_throws UnavailableError TestWrapperAvail(fakeidwrap)
+
+    # property
+    str1 = "foo"
+    prop = TestPropAvail(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestPropAvail})
+
+    @test :length in propertynames(prop)
+    @test :UTF8String in propertynames(prop)
+    @test :UnavailableProperty in propertynames(prop)
+
+    @test prop.length == length(str1)
+    @test unsafe_string(prop.UTF8String) == str1
+    @test_throws UnavailableError prop.UnavailableProperty
+end
+
 @testset "@objc macro" begin
     # class methods
     @objc [NSString new]::id{Object}
