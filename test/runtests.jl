@@ -1,6 +1,12 @@
 using ObjectiveC
 using Test
 
+@testset "version" begin
+    @test ObjectiveC.darwin_version() isa VersionNumber
+    @test ObjectiveC.macos_version() isa VersionNumber
+    @test ObjectiveC.is_macos(ObjectiveC.macos_version())
+end
+
 @testset "@objc macro" begin
     # class methods
     @objc [NSString new]::id{Object}
