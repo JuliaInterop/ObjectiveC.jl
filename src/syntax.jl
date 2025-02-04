@@ -473,7 +473,7 @@ propertyerror(s::String) = error("""Objective-C property declaration: $s.
 
 """
     @objcproperties ObjCType begin
-        @autoproperty myProperty::ObjCType [type=JuliaType] [setter=setMyProperty] [getter=getMyProperty] [availability=v"x.y"]
+        @autoproperty myProperty::ObjCType [type=JuliaType] [setter=setMyProperty] [getter=getMyProperty] [availability=macos(v"x.y")]
 
         @getproperty myProperty function(obj)
             ...
