@@ -8,17 +8,48 @@ using Test
 end
 
 # Availability
-@objcwrapper availability = v"1000" TestWrapperAvail <: Object
-@objcwrapper availability = v"0" TestPropAvail <: Object
+@objcwrapper availability = macos(v"1000") TestWrapperNoIntro1 <: Object
+@objcwrapper availability = macos(introduced = v"1000") TestWrapperNoIntro2 <: Object
+@objcwrapper availability = macos(deprecated = v"1", obsoleted = v"2.3.4") TestWrapperObsolete <: Object
+@objcwrapper availability = macos(introduced = v"1000", unavailable = true) TestWrapperUnavailable <: Object
+@objcwrapper availability = macos(v"0") TestPropAvail <: Object
 @objcproperties TestPropAvail begin
     @autoproperty length::Culong
-    @autoproperty UTF8String::Ptr{Cchar} availability = v"0"
-    @autoproperty UnavailableProperty::Cint availability = v"1000"
+    @autoproperty UTF8String::Ptr{Cchar} availability = macos(v"0")
+    @autoproperty NoIntro1Property::Cint availability = macos(v"1000")
+    @autoproperty NoIntro2Property::Cint availability = macos(introduced = v"1000")
+    @autoproperty ObsoleteProperty::Cint availability = macos(deprecated = v"1", obsoleted = v"2.3")
+    @autoproperty UnavailableProperty::Cint availability = macos(introduced = v"1000", unavailable = true)
+end
+@objcwrapper availability = [macos(v"1000")] TestVectUnavail <: Object
+@objcwrapper availability = [macos(v"0")] TestVectAvail <: Object
+@objcproperties TestVectAvail begin
+    @autoproperty length::Culong
+    @autoproperty UTF8String::Ptr{Cchar} availability = [macos(v"0")]
+    @autoproperty VectUnavailableProperty::Cint availability = [macos(introduced = v"1000")]
 end
 @testset "availability" begin
     # wrapper
-    fakeidwrap = id{TestWrapperAvail}(1)
-    @test_throws UnavailableError TestWrapperAvail(fakeidwrap)
+    let # not yet introduced arg version
+        fakeidwrap = id{TestWrapperNoIntro1}(1)
+        @test_throws "UnavailableError: `TestWrapperNoIntro1` was introduced on macOS v1000.0.0" TestWrapperNoIntro1(fakeidwrap)
+    end
+    let # not yet introduced kwarg version
+        fakeidwrap = id{TestWrapperNoIntro2}(1)
+        @test_throws "UnavailableError: `TestWrapperNoIntro2` was introduced on macOS v1000.0.0" TestWrapperNoIntro2(fakeidwrap)
+    end
+    let # obsolete
+        fakeidwrap = id{TestWrapperObsolete}(1)
+        @test_throws "UnavailableError: `TestWrapperObsolete` is obsolete since macOS v2.3.4" TestWrapperObsolete(fakeidwrap)
+    end
+    let # unavailable
+        fakeidwrap = id{TestWrapperUnavailable}(1)
+        @test_throws "UnavailableError: `TestWrapperUnavailable` is not available on macOS" TestWrapperUnavailable(fakeidwrap)
+    end
+    let # not yet introduced in vector
+        fakeidwrap = id{TestVectUnavail}(1)
+        @test_throws "UnavailableError: `TestVectUnavail` was introduced on macOS v1000.0.0" TestVectUnavail(fakeidwrap)
+    end
 
     # property
     str1 = "foo"
@@ -26,11 +57,21 @@ end
 
     @test :length in propertynames(prop)
     @test :UTF8String in propertynames(prop)
+    @test :NoIntro1Property in propertynames(prop)
+    @test :NoIntro2Property in propertynames(prop)
+    @test :ObsoleteProperty in propertynames(prop)
     @test :UnavailableProperty in propertynames(prop)
 
     @test prop.length == length(str1)
     @test unsafe_string(prop.UTF8String) == str1
-    @test_throws UnavailableError prop.UnavailableProperty
+    @test_throws "UnavailableError: `TestPropAvail.NoIntro1Property` was introduced on macOS v1000.0.0"  prop.NoIntro1Property
+    @test_throws "UnavailableError: `TestPropAvail.NoIntro2Property` was introduced on macOS v1000.0.0"  prop.NoIntro2Property
+    @test_throws "UnavailableError: `TestPropAvail.ObsoleteProperty` is obsolete since macOS v2.3.0" prop.ObsoleteProperty
+    @test_throws "UnavailableError: `TestPropAvail.UnavailableProperty` is not available on macOS" prop.UnavailableProperty
+
+    vectprop = TestVectAvail(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestVectAvail})
+    @test_throws "UnavailableError: `TestVectAvail.VectUnavailableProperty` was introduced on macOS v1000.0.0"  vectprop.VectUnavailableProperty
+
 end
 
 @testset "@objc macro" begin

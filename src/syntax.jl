@@ -255,6 +255,35 @@ macro objc(ex)
   objcm(__module__, ex)
 end
 
+# Based off of Clang's `CXPlatformAvailability`
+struct PlatformAvailability
+    introduced::Union{Nothing, VersionNumber}
+    deprecated::Union{Nothing, VersionNumber}
+    obsoleted::Union{Nothing, VersionNumber}
+    unavailable::Bool
+
+    PlatformAvailability(introduced, deprecated = nothing, obsoleted = nothing, unavailable = false) =
+        new(introduced, deprecated, obsoleted, unavailable)
+end
+PlatformAvailability(; introduced = nothing, deprecated = nothing, obsoleted = nothing, unavailable = false) =
+    PlatformAvailability(introduced, deprecated, obsoleted, unavailable)
+
+export macos
+struct macos
+    availability::PlatformAvailability
+    macos(args...) = new(PlatformAvailability(args...))
+    macos(; kwargs...) = new(PlatformAvailability(; kwargs...))
+end
+PlatformAvailability(avail::macos) = avail.availability
+
+
+is_unavailable(avail::macos) = is_unavailable(avail.availability)
+function is_unavailable(avail::PlatformAvailability)
+    return avail.unavailable ||
+        (!isnothing(avail.obsoleted) && macos_version() >= avail.obsoleted) ||
+        (!isnothing(avail.introduced) && macos_version() < avail.introduced)
+end
+
 export UnavailableError
 """
     UnavailableError(symbol::Symbol, minver::VersionNumber)
@@ -263,10 +292,41 @@ Attempt to contruct an Objective-C object or property that is
 not available in the current macOS version.
 """
 struct UnavailableError <: Exception
-  symbol::Symbol
-  minver::VersionNumber
+    symbol::Symbol
+    msg::String
 end
-Base.showerror(io::IO, e::UnavailableError) = print(io, "UnavailableError: `", e.symbol, "` was introduced in macOS v", e.minver)
+UnavailableError(symbol::Symbol, platform::Symbol, avail::macos) = UnavailableError(macos_version, symbol, platform, avail.availability)
+function UnavailableError(f::Function, symbol::Symbol, platform::Symbol, avail::PlatformAvailability)
+    msg = if avail.unavailable
+        "is not available on $platform"
+    elseif !isnothing(avail.obsoleted) && f() >= avail.obsoleted
+        "is obsolete since $platform v$(avail.obsoleted)"
+    elseif !isnothing(avail.introduced) && f() < avail.introduced
+        "was introduced on $platform v$(avail.introduced)"
+    else
+        "does not seem to be unavailable. Please file an issue at www.github.com/JuliaInterop/ObjectiveC.jl with the source of the offending Objective-C code."
+    end
+    return UnavailableError(symbol, msg)
+end
+
+function Base.showerror(io::IO, e::UnavailableError)
+    print(io, "UnavailableError: `", e.symbol, "` ", e.msg)
+    return
+end
+
+function _getmacosavailabilityexpr(value)
+    Meta.isexpr(value, :vect) || Meta.isexpr(value, :call) && value.args[1] == :macos || wrappererror("availability keyword argument must be a `macos(v\"x.y\")` statement")
+    if Meta.isexpr(value, :vect)
+        for expr in value.args
+            if Meta.isexpr(expr, :call) && expr.args[1] == :macos
+                return expr
+            end
+        end
+        return nothing
+    else
+        return value
+    end
+end
 
 # Wrapper Classes
 
@@ -314,8 +374,7 @@ macro objcwrapper(ex...)
         value isa Bool || wrappererror("immutable keyword argument must be a literal boolean")
         immutable = value
       elseif kw == :availability
-        Meta.isexpr(value, :macrocall) && value.args[1] == Symbol("@v_str") || wrappererror("availability keyword argument must be a `v_str` statement")
-        availability = macroexpand(__module__, value; recursive=false)
+        availability = ObjectiveC._getmacosavailabilityexpr(value)
       else
         wrappererror("unrecognized keyword argument: $kw")
       end
@@ -325,7 +384,7 @@ macro objcwrapper(ex...)
   end
   immutable = something(immutable, true)
   comparison = something(comparison, !immutable)
-  availability = something(availability, v"0")
+  availability = something(availability, :(macos(v"0")))
 
   # parse class definition
   if Meta.isexpr(def, :(<:))
@@ -366,8 +425,8 @@ macro objcwrapper(ex...)
 
     # add a pseudo constructor to the abstract type that also checks for nil pointers.
     function $name(ptr::id)
-      @static if !Sys.isapple() || ObjectiveC.macos_version() < $availability
-        throw($UnavailableError(Symbol($name), $availability))
+      @static if !Sys.isapple() || ObjectiveC.is_unavailable($availability)
+        throw($UnavailableError(Symbol($name), :macOS, $availability))
       end
 
       ptr == nil && throw(UndefRefError())
@@ -517,7 +576,11 @@ macro objcproperties(typ, ex)
             # caller's module and decide on the appropriate ABI. that necessitates use of
             # :hygienic-scope to handle the mix of esc/hygienic code.
 
-            availability = get(kwargs, :availability, v"0")
+            availability = nothing
+            if haskey(kwargs, :availability)
+                availability = ObjectiveC._getmacosavailabilityexpr(kwargs[:availability])
+            end
+            availability = something(availability, :(macos(v"0")))
 
             getterproperty = if haskey(kwargs, :getter)
                 kwargs[:getter]
@@ -526,8 +589,8 @@ macro objcproperties(typ, ex)
             end
             getproperty_ex = objcm(__module__, :([object::id{$(esc(typ))} $getterproperty]::$srcTyp))
             getproperty_ex = quote
-                @static if !Sys.isapple() || ObjectiveC.macos_version() < $availability
-                  throw($UnavailableError(Symbol($(esc(typ)),".",field), $availability))
+                @static if !Sys.isapple() || ObjectiveC.is_unavailable($availability)
+                    throw($UnavailableError(Symbol($(esc(typ)), ".", field), :macOS, $availability))
                 end
                 value = $(Expr(:var"hygienic-scope", getproperty_ex, @__MODULE__, __source__))
             end
