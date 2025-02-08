@@ -568,7 +568,7 @@ end
 @testset "tracing" begin
     ObjectiveC.enable_tracing(true)
     cmd = ```$(Base.julia_cmd()) --project=$(Base.active_project())
-                                 --eval "using ObjectiveC, .Foundation; String(NSString())"```
+                                 --eval "using ObjectiveC; using .Foundation; String(NSString())"```
 
     out = Pipe()
     err = Pipe()
