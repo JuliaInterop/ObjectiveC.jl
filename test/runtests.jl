@@ -1,8 +1,6 @@
 using ObjectiveC
 using Test
 
-using ObjectiveC
-
 @testset "@objc macro" begin
     # class methods
     @objc [NSString new]::id{Object}
