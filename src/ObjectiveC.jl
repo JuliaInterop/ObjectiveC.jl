@@ -14,8 +14,13 @@ The setting is saved in a preference, so is persistent, and requires a restart o
 take effect.
 """
 function enable_tracing(enabled::Bool)
+    prev_tracing = @load_preference("tracing", false)::Bool
     @set_preferences!("tracing" => enabled)
-    @info("ObjectiveC.jl tracing setting changed; restart your Julia session for this change to take effect!")
+    if prev_tracing == enabled
+        @info("ObjectiveC.jl tracing setting was already `$enabled`; setting not changed.")
+    else
+        @info("ObjectiveC.jl tracing setting changed; restart your Julia session for this change to take effect!")
+    end
 end
 const tracing = @load_preference("tracing", false)::Bool
 
