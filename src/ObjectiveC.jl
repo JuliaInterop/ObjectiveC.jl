@@ -21,6 +21,7 @@ function enable_tracing(enabled::Bool)
     else
         @info("ObjectiveC.jl tracing setting changed; restart your Julia session for this change to take effect!")
     end
+    return
 end
 const tracing = @load_preference("tracing", false)::Bool
 
