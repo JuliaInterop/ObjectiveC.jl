@@ -72,6 +72,13 @@ end
     vectprop = TestVectAvail(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestVectAvail})
     @test_throws "UnavailableError: `TestVectAvail.VectUnavailableProperty` was introduced on macOS v1000.0.0"  vectprop.VectUnavailableProperty
 
+    @test_throws "UnavailableError: `TestVectAvail.VectUnavailableProperty` was introduced on macOS v1000.0.0"  vectprop.VectUnavailableProperty
+    @test_throws "UnavailableError: `TestVectAvail.VectUnavailableProperty` was introduced on macOS v1000.0.0"  vectprop.VectUnavailableProperty
+
+    @test_throws "ObjectiveC wrapper: `availability`" macroexpand(@__MODULE__, :(@objcwrapper availability = templeos(v"1000") TestBadAvail2 <: Object))
+    @test_throws "ObjectiveC wrapper: `availability`" macroexpand(@__MODULE__, :(@objcwrapper availability = [templeos(v"1000")] TestBadAvail3 <: Object))
+    @test_throws "ObjectiveC wrapper: `availability`" macroexpand(@__MODULE__, :(@objcwrapper availability = [6] TestBadAvail4 <: Object))
+    @test_throws "ObjectiveC wrapper: `availability`" macroexpand(@__MODULE__, :(@objcwrapper availability = 6 TestBadAvail5 <: Object))
 end
 
 @testset "@objc macro" begin

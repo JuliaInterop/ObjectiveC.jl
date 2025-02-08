@@ -269,6 +269,13 @@ PlatformAvailability(; introduced = nothing, deprecated = nothing, obsoleted = n
     PlatformAvailability(introduced, deprecated, obsoleted, unavailable)
 
 export macos
+
+"""
+    macos(introduced[, deprecated, obsoleted, unavailable])
+    macos(; [introduced, deprecated, obsoleted, unavailable])
+
+Represents an availability statement for Objective-C wrappers.
+"""
 struct macos
     availability::PlatformAvailability
     macos(args...) = new(PlatformAvailability(args...))
@@ -314,17 +321,17 @@ function Base.showerror(io::IO, e::UnavailableError)
     return
 end
 
-function _getmacosavailabilityexpr(value)
-    Meta.isexpr(value, :vect) || Meta.isexpr(value, :call) && value.args[1] == :macos || wrappererror("availability keyword argument must be a `macos(v\"x.y\")` statement")
-    if Meta.isexpr(value, :vect)
-        for expr in value.args
-            if Meta.isexpr(expr, :call) && expr.args[1] == :macos
-                return expr
-            end
-        end
-        return nothing
-    else
-        return value
+function _getmacosavailability(expr)
+    try
+        # Don't run arbitrary code
+        Meta.isexpr(expr, :vect) || Meta.isexpr(expr, :call) && expr.args[1] == :macos || error()
+
+        avail = eval(expr)
+        # Returns the first `macos` object in the vector, otherwise
+        # the error gets caught and a helpful message is displayed
+        return avail isa macos ? avail : avail[findfirst(x -> x isa macos, avail)]
+    catch
+        wrappererror("`availability` keyword argument must be a valid `macos` constructor or a vector thereof")
     end
 end
 
@@ -351,7 +358,7 @@ keyword arguments:
 
   * `immutable`: if `true` (default), define the instance class as an immutable. Should be
     disabled when you want to use finalizers.
-  * `availability`: A version string that represents the first macOS version where this object is available.
+  * `availability`: A `macos` object that represents the availability of the object.
   * `comparison`: if `true` (default `false`), define `==` and `hash` methods for the
     wrapper class. This should not be necessary when using an immutable struct, in which
     case the default `==` and `hash` methods are sufficient.
@@ -374,7 +381,7 @@ macro objcwrapper(ex...)
         value isa Bool || wrappererror("immutable keyword argument must be a literal boolean")
         immutable = value
       elseif kw == :availability
-        availability = ObjectiveC._getmacosavailabilityexpr(value)
+        availability = ObjectiveC._getmacosavailability(value)
       else
         wrappererror("unrecognized keyword argument: $kw")
       end
@@ -384,7 +391,7 @@ macro objcwrapper(ex...)
   end
   immutable = something(immutable, true)
   comparison = something(comparison, !immutable)
-  availability = something(availability, :(macos(v"0")))
+  availability = something(availability, macos(v"0"))
 
   # parse class definition
   if Meta.isexpr(def, :(<:))
@@ -498,9 +505,8 @@ contains a series of property declarations:
   - `setter`: specifies the name of the Objective-C setter method. Without this, no
     `setproperty!` definition will be generated.
   - `getter`: specifies the name of the Objective-C getter method. Without this, the
-    getter method is assumed to be identical to the property
-  - `availability`: specifies earliest macOS version where this property became available,
-    similar to the Objective-C attribute of the same name
+    getter method is assumed to be identical to the property.
+  - `availability`: A `macos` object that represents the availability of the property.
 - `@getproperty myProperty function(obj) ... end`: define a custom getter for the property.
   The function should take a single argument `obj`, which is the object that the property is
   being accessed on. The function should return the property value.
@@ -578,9 +584,9 @@ macro objcproperties(typ, ex)
 
             availability = nothing
             if haskey(kwargs, :availability)
-                availability = ObjectiveC._getmacosavailabilityexpr(kwargs[:availability])
+                availability = ObjectiveC._getmacosavailability(kwargs[:availability])
             end
-            availability = something(availability, :(macos(v"0")))
+            availability = something(availability, macos(v"0"))
 
             getterproperty = if haskey(kwargs, :getter)
                 kwargs[:getter]
