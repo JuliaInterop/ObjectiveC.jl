@@ -12,8 +12,12 @@ jobs:
       fail-fast: false
       matrix:
         version: ['1.10', 'pre', 'nightly']
-        os: ['macOS-latest']
-        arch: [x64]
+        os: ['macOS-13', 'macOS-latest']
+        include:
+          - os: 'macOS-13'
+            arch: 'x64'
+          - os: 'macOS-latest'
+            arch: 'aarch64'
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
