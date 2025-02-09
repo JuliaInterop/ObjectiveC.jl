@@ -321,12 +321,12 @@ function Base.showerror(io::IO, e::UnavailableError)
     return
 end
 
-function _getmacosavailability(expr)
+function _getmacosavailability(mod, expr)
     try
         # Don't run arbitrary code
         Meta.isexpr(expr, :vect) || Meta.isexpr(expr, :call) && expr.args[1] == :macos || error()
 
-        avail = eval(expr)
+        avail = Base.eval(mod, expr)
         # Returns the first `macos` object in the vector, otherwise
         # the error gets caught and a helpful message is displayed
         return avail isa macos ? avail : avail[findfirst(x -> x isa macos, avail)]
@@ -381,7 +381,7 @@ macro objcwrapper(ex...)
         value isa Bool || wrappererror("immutable keyword argument must be a literal boolean")
         immutable = value
       elseif kw == :availability
-        availability = ObjectiveC._getmacosavailability(value)
+        availability = ObjectiveC._getmacosavailability(__module__, value)
       else
         wrappererror("unrecognized keyword argument: $kw")
       end
@@ -584,7 +584,7 @@ macro objcproperties(typ, ex)
 
             availability = nothing
             if haskey(kwargs, :availability)
-                availability = ObjectiveC._getmacosavailability(kwargs[:availability])
+                availability = ObjectiveC._getmacosavailability(__module__, kwargs[:availability])
             end
             availability = something(availability, macos(v"0"))
 
