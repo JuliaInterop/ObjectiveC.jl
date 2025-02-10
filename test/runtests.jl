@@ -1,8 +1,6 @@
 using ObjectiveC
 using Test
 
-using ObjectiveC
-
 @testset "@objc macro" begin
     # class methods
     @objc [NSString new]::id{Object}
@@ -568,7 +566,7 @@ end
 @testset "tracing" begin
     ObjectiveC.enable_tracing(true)
     cmd = ```$(Base.julia_cmd()) --project=$(Base.active_project())
-                                 --eval "using ObjectiveC, .Foundation; String(NSString())"```
+                                 --eval "using ObjectiveC; using .Foundation; String(NSString())"```
 
     out = Pipe()
     err = Pipe()
