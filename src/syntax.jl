@@ -317,7 +317,7 @@ for (name, pretty_name, version_function) in ((:macos, "macOS", :macos_version),
     Returns a `PlatformAvailability{:$name}` that represents a $pretty_name platform availability statement for Objective-C wrappers.
     """
     @eval begin
-        $name(args...; kwargs...) = PlatformAvailability(Symbol($name), args...;kwargs...)
+        $name(args...; kwargs...) = PlatformAvailability(Symbol($name), args...; kwargs...)
         @doc $doc_str $name
 
         is_unavailable(avail::PlatformAvailability{Symbol($name)}) = is_unavailable($version_function, avail)
