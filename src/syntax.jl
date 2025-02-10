@@ -256,38 +256,32 @@ macro objc(ex)
 end
 
 # Based off of Clang's `CXPlatformAvailability`
-struct PlatformAvailability
+struct PlatformAvailability{Symbol}
     introduced::Union{Nothing, VersionNumber}
     deprecated::Union{Nothing, VersionNumber}
     obsoleted::Union{Nothing, VersionNumber}
     unavailable::Bool
 
-    PlatformAvailability(introduced, deprecated = nothing, obsoleted = nothing, unavailable = false) =
-        new(introduced, deprecated, obsoleted, unavailable)
+    PlatformAvailability(platform, introduced, deprecated = nothing, obsoleted = nothing, unavailable = false) =
+        new{platform}(introduced, deprecated, obsoleted, unavailable)
 end
-PlatformAvailability(; introduced = nothing, deprecated = nothing, obsoleted = nothing, unavailable = false) =
-    PlatformAvailability(introduced, deprecated, obsoleted, unavailable)
+PlatformAvailability(platform; introduced = nothing, deprecated = nothing, obsoleted = nothing, unavailable = false) =
+    PlatformAvailability(platform, introduced, deprecated, obsoleted, unavailable)
 
 """
     macos(introduced[, deprecated, obsoleted, unavailable])
     macos(; [introduced, deprecated, obsoleted, unavailable])
 
-Represents an availability statement for Objective-C wrappers.
+Returns a `PlatformAvailability{:macos}` that represents a macOS platform availability statement for Objective-C wrappers.
 """
-struct macos
-    availability::PlatformAvailability
-    macos(args...) = new(PlatformAvailability(args...))
-    macos(; kwargs...) = new(PlatformAvailability(; kwargs...))
-end
-PlatformAvailability(avail::macos) = avail.availability
+macos(args...; kwargs...) = PlatformAvailability(:macos, args...;kwargs...)
 
-
-is_unavailable(avail::macos) = is_unavailable(avail.availability)
-function is_unavailable(avail::PlatformAvailability)
+function is_unavailable(f::Function, avail::PlatformAvailability)
     return avail.unavailable ||
-        (!isnothing(avail.obsoleted) && macos_version() >= avail.obsoleted) ||
-        (!isnothing(avail.introduced) && macos_version() < avail.introduced)
+        (!isnothing(avail.obsoleted) && f() >= avail.obsoleted) ||
+        (!isnothing(avail.introduced) && f() < avail.introduced)
 end
+is_unavailable(avail::PlatformAvailability{:macos}) = is_unavailable(macos_version, avail)
 
 export UnavailableError
 """
@@ -300,7 +294,6 @@ struct UnavailableError <: Exception
     symbol::Symbol
     msg::String
 end
-UnavailableError(symbol::Symbol, platform::Symbol, avail::macos) = UnavailableError(macos_version, symbol, platform, avail.availability)
 function UnavailableError(f::Function, symbol::Symbol, platform::Symbol, avail::PlatformAvailability)
     msg = if avail.unavailable
         "is not available on $platform"
@@ -313,6 +306,7 @@ function UnavailableError(f::Function, symbol::Symbol, platform::Symbol, avail::
     end
     return UnavailableError(symbol, msg)
 end
+UnavailableError(symbol::Symbol, platform::Symbol, avail::PlatformAvailability{:macos}) = UnavailableError(macos_version, symbol, platform, avail)
 
 function Base.showerror(io::IO, e::UnavailableError)
     print(io, "UnavailableError: `", e.symbol, "` ", e.msg)
@@ -327,7 +321,7 @@ function _getmacosavailability(mod, expr)
         avail = Base.eval(mod, expr)
         # Returns the first `macos` object in the vector, otherwise
         # the error gets caught and a helpful message is displayed
-        return avail isa macos ? avail : avail[findfirst(x -> x isa macos, avail)]
+        return avail isa PlatformAvailability{:macos} ? avail : avail[findfirst(x -> x isa PlatformAvailability{:macos}, avail)]
     catch
         wrappererror("`availability` keyword argument must be a valid `macos` constructor or a vector thereof")
     end
