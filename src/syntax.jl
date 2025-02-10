@@ -268,20 +268,28 @@ end
 PlatformAvailability(platform; introduced = nothing, deprecated = nothing, obsoleted = nothing, unavailable = false) =
     PlatformAvailability(platform, introduced, deprecated, obsoleted, unavailable)
 
-"""
-    macos(introduced[, deprecated, obsoleted, unavailable])
-    macos(; [introduced, deprecated, obsoleted, unavailable])
+# define the available platforms
+for (name, pretty_name) in ((:macos, :macOS), (:darwin, :Darwin))
+    doc_str = """
+        $name(introduced[, deprecated, obsoleted, unavailable])
+        $name(; [introduced, deprecated, obsoleted, unavailable])
 
-Returns a `PlatformAvailability{:macos}` that represents a macOS platform availability statement for Objective-C wrappers.
-"""
-macos(args...; kwargs...) = PlatformAvailability(:macos, args...;kwargs...)
+    Returns a `PlatformAvailability{:$name}` that represents a $pretty_name platform availability statement for Objective-C wrappers.
+    """
+    @eval begin
+        $name(args...; kwargs...) = PlatformAvailability(Symbol($name), args...;kwargs...)
+        @doc $doc_str $name
+    end
+end
 
 function is_unavailable(f::Function, avail::PlatformAvailability)
     return avail.unavailable ||
         (!isnothing(avail.obsoleted) && f() >= avail.obsoleted) ||
         (!isnothing(avail.introduced) && f() < avail.introduced)
 end
+is_unavailable(avails::Vector{<:PlatformAvailability}) = any(is_unavailable.(avails))
 is_unavailable(avail::PlatformAvailability{:macos}) = is_unavailable(macos_version, avail)
+is_unavailable(avail::PlatformAvailability{:darwin}) = is_unavailable(darwin_version, avail)
 
 export UnavailableError
 """
@@ -306,25 +314,23 @@ function UnavailableError(f::Function, symbol::Symbol, platform::Symbol, avail::
     end
     return UnavailableError(symbol, msg)
 end
-UnavailableError(symbol::Symbol, platform::Symbol, avail::PlatformAvailability{:macos}) = UnavailableError(macos_version, symbol, platform, avail)
+function UnavailableError(symbol::Symbol, avails::Vector{<:PlatformAvailability})
+    firsterror = findfirst(is_unavailable, avails)
+    return UnavailableError(symbol, avails[firsterror])
+end
+UnavailableError(symbol::Symbol, avail::PlatformAvailability{:macos}) = UnavailableError(macos_version, symbol, :macOS, avail)
+UnavailableError(symbol::Symbol, avail::PlatformAvailability{:darwin}) = UnavailableError(darwin_version, symbol, :Darwin, avail)
 
 function Base.showerror(io::IO, e::UnavailableError)
     print(io, "UnavailableError: `", e.symbol, "` ", e.msg)
     return
 end
 
-function _getmacosavailability(mod, expr)
-    try
-        # Don't run arbitrary code
-        Meta.isexpr(expr, :vect) || Meta.isexpr(expr, :call) && expr.args[1] == :macos || error()
+function _getavailability(mod, expr)
+    avail = Base.eval(mod, expr)
+    @assert avail isa PlatformAvailability || avail isa Vector{<:PlatformAvailability} "`availability` keyword argument must be a valid `PlatformAvailability` constructor or a vector thereof"
 
-        avail = Base.eval(mod, expr)
-        # Returns the first `macos` object in the vector, otherwise
-        # the error gets caught and a helpful message is displayed
-        return avail isa PlatformAvailability{:macos} ? avail : avail[findfirst(x -> x isa PlatformAvailability{:macos}, avail)]
-    catch
-        wrappererror("`availability` keyword argument must be a valid `macos` constructor or a vector thereof")
-    end
+    return avail
 end
 
 # Wrapper Classes
@@ -350,7 +356,7 @@ keyword arguments:
 
   * `immutable`: if `true` (default), define the instance class as an immutable. Should be
     disabled when you want to use finalizers.
-  * `availability`: A `macos` object that represents the availability of the object.
+  * `availability`: A `PlatformAvailability` object that represents the availability of the object.
   * `comparison`: if `true` (default `false`), define `==` and `hash` methods for the
     wrapper class. This should not be necessary when using an immutable struct, in which
     case the default `==` and `hash` methods are sufficient.
@@ -373,7 +379,7 @@ macro objcwrapper(ex...)
         value isa Bool || wrappererror("immutable keyword argument must be a literal boolean")
         immutable = value
       elseif kw == :availability
-        availability = ObjectiveC._getmacosavailability(ObjectiveC, value)
+        availability = ObjectiveC._getavailability(ObjectiveC, value)
       else
         wrappererror("unrecognized keyword argument: $kw")
       end
@@ -425,7 +431,7 @@ macro objcwrapper(ex...)
     # add a pseudo constructor to the abstract type that also checks for nil pointers.
     function $name(ptr::id)
       @static if !Sys.isapple() || ObjectiveC.is_unavailable($availability)
-        throw($UnavailableError(Symbol($name), :macOS, $availability))
+        throw($UnavailableError(Symbol($name), $availability))
       end
 
       ptr == nil && throw(UndefRefError())
@@ -472,7 +478,7 @@ propertyerror(s::String) = error("""Objective-C property declaration: $s.
 
 """
     @objcproperties ObjCType begin
-        @autoproperty myProperty::ObjCType [type=JuliaType] [setter=setMyProperty] [getter=getMyProperty] [availability=macos(v"x.y")]
+        @autoproperty myProperty::ObjCType [type=JuliaType] [setter=setMyProperty] [getter=getMyProperty] [availability::PlatformAvailability]
 
         @getproperty myProperty function(obj)
             ...
@@ -498,7 +504,7 @@ contains a series of property declarations:
     `setproperty!` definition will be generated.
   - `getter`: specifies the name of the Objective-C getter method. Without this, the
     getter method is assumed to be identical to the property.
-  - `availability`: A `macos` object that represents the availability of the property.
+  - `availability`: A `PlatformAvailability` object that represents the availability of the property.
 - `@getproperty myProperty function(obj) ... end`: define a custom getter for the property.
   The function should take a single argument `obj`, which is the object that the property is
   being accessed on. The function should return the property value.
@@ -576,7 +582,7 @@ macro objcproperties(typ, ex)
 
             availability = nothing
             if haskey(kwargs, :availability)
-                availability = ObjectiveC._getmacosavailability(ObjectiveC, kwargs[:availability])
+                availability = ObjectiveC._getavailability(ObjectiveC, kwargs[:availability])
             end
             availability = something(availability, macos(v"0"))
 
@@ -588,7 +594,7 @@ macro objcproperties(typ, ex)
             getproperty_ex = objcm(__module__, :([object::id{$(esc(typ))} $getterproperty]::$srcTyp))
             getproperty_ex = quote
                 @static if !Sys.isapple() || ObjectiveC.is_unavailable($availability)
-                    throw($UnavailableError(Symbol($(esc(typ)), ".", field), :macOS, $availability))
+                    throw($UnavailableError(Symbol($(esc(typ)), ".", field), $availability))
                 end
                 value = $(Expr(:var"hygienic-scope", getproperty_ex, @__MODULE__, __source__))
             end

@@ -22,6 +22,9 @@ end
     @autoproperty UnavailableProperty::Cint availability = macos(introduced = v"1000", unavailable = true)
 end
 @objcwrapper availability = [macos(v"1000")] TestVectUnavail <: Object
+@objcwrapper availability = [macos(v"1000"), darwin(v"0")] TestVectMultiple1 <: Object
+@objcwrapper availability = [macos(v"0"), darwin(v"1000")] TestVectMultiple2 <: Object
+@objcwrapper availability = [macos(v"0"), darwin(v"0")] TestVectMultiple3 <: Object
 @objcwrapper availability = [macos(v"0")] TestVectAvail <: Object
 @objcproperties TestVectAvail begin
     @autoproperty length::Culong
@@ -50,6 +53,18 @@ end
         fakeidwrap = id{TestVectUnavail}(1)
         @test_throws "UnavailableError: `TestVectUnavail` was introduced on macOS v1000.0.0" TestVectUnavail(fakeidwrap)
     end
+    let # not yet introduced in vector for multiple
+        fakeidwrap = id{TestVectMultiple1}(1)
+        @test_throws "UnavailableError: `TestVectMultiple1` was introduced on macOS v1000.0.0" TestVectMultiple1(fakeidwrap)
+    end
+    let # not yet introduced in vector for multiple
+        fakeidwrap = id{TestVectMultiple2}(1)
+        @test_throws "UnavailableError: `TestVectMultiple2` was introduced on Darwin v1000.0.0" TestVectMultiple2(fakeidwrap)
+    end
+    let # Make sure it does not error
+        fakeidwrap = id{TestVectMultiple3}(1)
+        @test TestVectMultiple3(fakeidwrap) isa TestVectMultiple3
+    end
 
     # property
     str1 = "foo"
@@ -75,10 +90,10 @@ end
     @test_throws "UnavailableError: `TestVectAvail.VectUnavailableProperty` was introduced on macOS v1000.0.0"  vectprop.VectUnavailableProperty
     @test_throws "UnavailableError: `TestVectAvail.VectUnavailableProperty` was introduced on macOS v1000.0.0"  vectprop.VectUnavailableProperty
 
-    @test_throws "ObjectiveC wrapper: `availability`" macroexpand(@__MODULE__, :(@objcwrapper availability = templeos(v"1000") TestBadAvail2 <: Object))
-    @test_throws "ObjectiveC wrapper: `availability`" macroexpand(@__MODULE__, :(@objcwrapper availability = [templeos(v"1000")] TestBadAvail3 <: Object))
-    @test_throws "ObjectiveC wrapper: `availability`" macroexpand(@__MODULE__, :(@objcwrapper availability = [6] TestBadAvail4 <: Object))
-    @test_throws "ObjectiveC wrapper: `availability`" macroexpand(@__MODULE__, :(@objcwrapper availability = 6 TestBadAvail5 <: Object))
+    @test_throws UndefVarError macroexpand(@__MODULE__, :(@objcwrapper availability = templeos(v"1000") TestBadAvail2 <: Object))
+    @test_throws UndefVarError macroexpand(@__MODULE__, :(@objcwrapper availability = [templeos(v"1000")] TestBadAvail3 <: Object))
+    @test_throws "`availability` keyword argument must be a valid `PlatformAvailability`" macroexpand(@__MODULE__, :(@objcwrapper availability = [6] TestBadAvail4 <: Object))
+    @test_throws "`availability` keyword argument must be a valid `PlatformAvailability`" macroexpand(@__MODULE__, :(@objcwrapper availability = 6 TestBadAvail5 <: Object))
 end
 
 @testset "@objc macro" begin
