@@ -268,8 +268,6 @@ end
 PlatformAvailability(; introduced = nothing, deprecated = nothing, obsoleted = nothing, unavailable = false) =
     PlatformAvailability(introduced, deprecated, obsoleted, unavailable)
 
-export macos
-
 """
     macos(introduced[, deprecated, obsoleted, unavailable])
     macos(; [introduced, deprecated, obsoleted, unavailable])
@@ -381,7 +379,7 @@ macro objcwrapper(ex...)
         value isa Bool || wrappererror("immutable keyword argument must be a literal boolean")
         immutable = value
       elseif kw == :availability
-        availability = ObjectiveC._getmacosavailability(__module__, value)
+        availability = ObjectiveC._getmacosavailability(ObjectiveC, value)
       else
         wrappererror("unrecognized keyword argument: $kw")
       end
@@ -584,7 +582,7 @@ macro objcproperties(typ, ex)
 
             availability = nothing
             if haskey(kwargs, :availability)
-                availability = ObjectiveC._getmacosavailability(__module__, kwargs[:availability])
+                availability = ObjectiveC._getmacosavailability(ObjectiveC, kwargs[:availability])
             end
             availability = something(availability, macos(v"0"))
 
