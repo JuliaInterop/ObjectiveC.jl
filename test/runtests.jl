@@ -29,7 +29,7 @@ end
 @objcproperties TestVectAvail begin
     @autoproperty length::Culong
     @autoproperty UTF8String::Ptr{Cchar} availability = [macos(v"0")]
-    @autoproperty VectUnavailableProperty::Cint availability = [macos(introduced = v"1000")]
+    @autoproperty VectUnavailableProperty::Cint availability = [darwin(introduced = v"1000")]
 end
 @testset "availability" begin
     # wrapper
@@ -85,10 +85,7 @@ end
     @test_throws "UnavailableError: `TestPropAvail.UnavailableProperty` is not available on macOS" prop.UnavailableProperty
 
     vectprop = TestVectAvail(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestVectAvail})
-    @test_throws "UnavailableError: `TestVectAvail.VectUnavailableProperty` was introduced on macOS v1000.0.0"  vectprop.VectUnavailableProperty
-
-    @test_throws "UnavailableError: `TestVectAvail.VectUnavailableProperty` was introduced on macOS v1000.0.0"  vectprop.VectUnavailableProperty
-    @test_throws "UnavailableError: `TestVectAvail.VectUnavailableProperty` was introduced on macOS v1000.0.0"  vectprop.VectUnavailableProperty
+    @test_throws "UnavailableError: `TestVectAvail.VectUnavailableProperty` was introduced on Darwin v1000.0.0"  vectprop.VectUnavailableProperty
 
     @test_throws UndefVarError macroexpand(@__MODULE__, :(@objcwrapper availability = templeos(v"1000") TestBadAvail2 <: Object))
     @test_throws UndefVarError macroexpand(@__MODULE__, :(@objcwrapper availability = [templeos(v"1000")] TestBadAvail3 <: Object))

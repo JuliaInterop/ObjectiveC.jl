@@ -268,28 +268,12 @@ end
 PlatformAvailability(platform; introduced = nothing, deprecated = nothing, obsoleted = nothing, unavailable = false) =
     PlatformAvailability(platform, introduced, deprecated, obsoleted, unavailable)
 
-# define the available platforms
-for (name, pretty_name) in ((:macos, :macOS), (:darwin, :Darwin))
-    doc_str = """
-        $name(introduced[, deprecated, obsoleted, unavailable])
-        $name(; [introduced, deprecated, obsoleted, unavailable])
-
-    Returns a `PlatformAvailability{:$name}` that represents a $pretty_name platform availability statement for Objective-C wrappers.
-    """
-    @eval begin
-        $name(args...; kwargs...) = PlatformAvailability(Symbol($name), args...;kwargs...)
-        @doc $doc_str $name
-    end
-end
-
 function is_unavailable(f::Function, avail::PlatformAvailability)
     return avail.unavailable ||
         (!isnothing(avail.obsoleted) && f() >= avail.obsoleted) ||
         (!isnothing(avail.introduced) && f() < avail.introduced)
 end
 is_unavailable(avails::Vector{<:PlatformAvailability}) = any(is_unavailable.(avails))
-is_unavailable(avail::PlatformAvailability{:macos}) = is_unavailable(macos_version, avail)
-is_unavailable(avail::PlatformAvailability{:darwin}) = is_unavailable(darwin_version, avail)
 
 export UnavailableError
 """
@@ -302,7 +286,7 @@ struct UnavailableError <: Exception
     symbol::Symbol
     msg::String
 end
-function UnavailableError(f::Function, symbol::Symbol, platform::Symbol, avail::PlatformAvailability)
+function UnavailableError(f::Function, symbol::Symbol, platform::String, avail::PlatformAvailability)
     msg = if avail.unavailable
         "is not available on $platform"
     elseif !isnothing(avail.obsoleted) && f() >= avail.obsoleted
@@ -318,12 +302,27 @@ function UnavailableError(symbol::Symbol, avails::Vector{<:PlatformAvailability}
     firsterror = findfirst(is_unavailable, avails)
     return UnavailableError(symbol, avails[firsterror])
 end
-UnavailableError(symbol::Symbol, avail::PlatformAvailability{:macos}) = UnavailableError(macos_version, symbol, :macOS, avail)
-UnavailableError(symbol::Symbol, avail::PlatformAvailability{:darwin}) = UnavailableError(darwin_version, symbol, :Darwin, avail)
 
 function Base.showerror(io::IO, e::UnavailableError)
     print(io, "UnavailableError: `", e.symbol, "` ", e.msg)
     return
+end
+
+# Platform-specific definitions
+for (name, pretty_name, version_function) in ((:macos, "macOS", :macos_version), (:darwin, "Darwin", :darwin_version))
+    doc_str = """
+        $name(introduced[, deprecated, obsoleted, unavailable])
+        $name(; [introduced, deprecated, obsoleted, unavailable])
+
+    Returns a `PlatformAvailability{:$name}` that represents a $pretty_name platform availability statement for Objective-C wrappers.
+    """
+    @eval begin
+        $name(args...; kwargs...) = PlatformAvailability(Symbol($name), args...;kwargs...)
+        @doc $doc_str $name
+
+        is_unavailable(avail::PlatformAvailability{Symbol($name)}) = is_unavailable($version_function, avail)
+        UnavailableError(symbol::Symbol, avail::PlatformAvailability{Symbol($name)}) = UnavailableError($version_function, symbol, $pretty_name, avail)
+    end
 end
 
 function _getavailability(mod, expr)
