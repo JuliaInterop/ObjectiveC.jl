@@ -34,6 +34,7 @@ include("version.jl")
 
 # Calls & Properties
 include("abi.jl")
+include("availability.jl")
 include("syntax.jl")
 
 # API wrappers
