@@ -301,7 +301,7 @@ macro objcwrapper(ex...)
         value isa Bool || wrappererror("immutable keyword argument must be a literal boolean")
         immutable = value
       elseif kw == :availability
-        availability = ObjectiveC._getavailability(ObjectiveC, value)
+        availability = ObjectiveC._getavailability(__module__, value)
       else
         wrappererror("unrecognized keyword argument: $kw")
       end
@@ -311,7 +311,7 @@ macro objcwrapper(ex...)
   end
   immutable = something(immutable, true)
   comparison = something(comparison, !immutable)
-  availability = something(availability, macos(v"0"))
+  availability = something(availability, PlatformAvailability(:macos, v"0"))
 
   # parse class definition
   if Meta.isexpr(def, :(<:))
@@ -504,9 +504,9 @@ macro objcproperties(typ, ex)
 
             availability = nothing
             if haskey(kwargs, :availability)
-                availability = ObjectiveC._getavailability(ObjectiveC, kwargs[:availability])
+                availability = ObjectiveC._getavailability(__module__, kwargs[:availability])
             end
-            availability = something(availability, macos(v"0"))
+            availability = something(availability, PlatformAvailability(:macos, v"0"))
 
             getterproperty = if haskey(kwargs, :getter)
                 kwargs[:getter]

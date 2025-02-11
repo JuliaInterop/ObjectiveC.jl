@@ -1,14 +1,30 @@
 export PlatformAvailability, UnavailableError
 
+# Each platform tuple has a symbol representing the constructor, a pretty name for errors,
+# and a symbol of the function used to check the version for that platform
+const SUPPORTED_PLATFORMS = [(:macos, "macOS", :macos_version), (:darwin, "Darwin", :darwin_version)]
+
 # Based off of Clang's `CXPlatformAvailability`
-struct PlatformAvailability{Symbol}
+"""
+    PlatformAvailability(platform::Symbol, introduced[, deprecated, obsoleted, unavailable])
+    PlatformAvailability(platform::Symbol, ; [introduced, deprecated, obsoleted, unavailable])
+
+Creates a `PlatformAvailability{platform}` object representing an availability statement for Objective-C wrappers.
+
+The currently supported values for `platform` are:
+- `:macos`:  for macOS version availability
+- `:darwin`: for Darwin kernel availability
+"""
+struct PlatformAvailability{P}
     introduced::Union{Nothing, VersionNumber}
     deprecated::Union{Nothing, VersionNumber}
     obsoleted::Union{Nothing, VersionNumber}
     unavailable::Bool
 
-    PlatformAvailability(platform, introduced, deprecated = nothing, obsoleted = nothing, unavailable = false) =
-        new{platform}(introduced, deprecated, obsoleted, unavailable)
+    function PlatformAvailability(platform::Symbol, introduced, deprecated = nothing, obsoleted = nothing, unavailable = false)
+        platform in first.(SUPPORTED_PLATFORMS) || throw(ArgumentError(lazy"`:$platform` is not a supported platform for `PlatformAvailability`, see `?PlatformAvailabiliy` for more information."))
+        return new{platform}(introduced, deprecated, obsoleted, unavailable)
+    end
 end
 PlatformAvailability(platform; introduced = nothing, deprecated = nothing, obsoleted = nothing, unavailable = false) =
     PlatformAvailability(platform, introduced, deprecated, obsoleted, unavailable)
@@ -53,26 +69,34 @@ function Base.showerror(io::IO, e::UnavailableError)
 end
 
 # Platform-specific definitions
-for (name, pretty_name, version_function) in ((:macos, "macOS", :macos_version), (:darwin, "Darwin", :darwin_version))
-    doc_str = """
-        $name(introduced[, deprecated, obsoleted, unavailable])
-        $name(; [introduced, deprecated, obsoleted, unavailable])
-
-    Returns a `PlatformAvailability{:$name}` that represents a $pretty_name platform availability statement for Objective-C wrappers.
-    """
+for (name, pretty_name, version_function) in SUPPORTED_PLATFORMS
+    quotname = Meta.quot(name)
     @eval begin
-        export $name
-        $name(args...; kwargs...) = PlatformAvailability(Symbol($name), args...; kwargs...)
-        @doc $doc_str $name
-
-        is_unavailable(avail::PlatformAvailability{Symbol($name)}) = is_unavailable($version_function, avail)
-        UnavailableError(symbol::Symbol, avail::PlatformAvailability{Symbol($name)}) = UnavailableError($version_function, symbol, $pretty_name, avail)
+        is_unavailable(avail::PlatformAvailability{$quotname}) = is_unavailable($version_function, avail)
+        UnavailableError(symbol::Symbol, avail::PlatformAvailability{$quotname}) = UnavailableError($version_function, symbol, $pretty_name, avail)
     end
 end
 
+function transform_avail_expr!(expr)
+    if Meta.isexpr(expr, :vect)
+        for availexpr in expr.args
+            _transform_avail_expr!(availexpr)
+        end
+    else
+        _transform_avail_expr!(expr)
+    end
+    return expr
+end
+function _transform_avail_expr!(expr)
+    @assert Meta.isexpr(expr, :call) "`availability` keyword argument must be a valid `PlatformAvailability` constructor or vector."
+    expr.args[1] = Meta.quot(expr.args[1])
+    insert!(expr.args, 1, :PlatformAvailability)
+    return expr
+end
+
 function _getavailability(mod, expr)
+    transform_avail_expr!(expr)
     avail = Base.eval(mod, expr)
-    @assert avail isa PlatformAvailability || avail isa Vector{<:PlatformAvailability} "`availability` keyword argument must be a valid `PlatformAvailability` constructor or a vector thereof"
 
     return avail
 end
