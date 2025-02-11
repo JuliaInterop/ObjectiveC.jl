@@ -29,8 +29,12 @@ const tracing = @load_preference("tracing", false)::Bool
 include("primitives.jl")
 include("methods.jl")
 
+# Get macOS and Darwin version
+include("version.jl")
+
 # Calls & Properties
 include("abi.jl")
+include("availability.jl")
 include("syntax.jl")
 
 # API wrappers

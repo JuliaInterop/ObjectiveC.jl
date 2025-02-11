@@ -250,10 +250,10 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals)
     end
 end
 
+# TODO: support availability
 macro objc(ex)
   objcm(__module__, ex)
 end
-
 
 # Wrapper Classes
 
@@ -278,6 +278,7 @@ keyword arguments:
 
   * `immutable`: if `true` (default), define the instance class as an immutable. Should be
     disabled when you want to use finalizers.
+  * `availability`: A `PlatformAvailability` object that represents the availability of the object.
   * `comparison`: if `true` (default `false`), define `==` and `hash` methods for the
     wrapper class. This should not be necessary when using an immutable struct, in which
     case the default `==` and `hash` methods are sufficient.
@@ -289,6 +290,7 @@ macro objcwrapper(ex...)
   # parse kwargs
   comparison = nothing
   immutable = nothing
+  availability = nothing
   for kw in kwargs
     if kw isa Expr && kw.head == :(=)
       kw, value = kw.args
@@ -298,6 +300,8 @@ macro objcwrapper(ex...)
       elseif kw == :immutable
         value isa Bool || wrappererror("immutable keyword argument must be a literal boolean")
         immutable = value
+      elseif kw == :availability
+        availability = get_avail_exprs(__module__, value)
       else
         wrappererror("unrecognized keyword argument: $kw")
       end
@@ -307,6 +311,7 @@ macro objcwrapper(ex...)
   end
   immutable = something(immutable, true)
   comparison = something(comparison, !immutable)
+  availability = something(availability, PlatformAvailability(:macos, v"0"))
 
   # parse class definition
   if Meta.isexpr(def, :(<:))
@@ -347,6 +352,10 @@ macro objcwrapper(ex...)
 
     # add a pseudo constructor to the abstract type that also checks for nil pointers.
     function $name(ptr::id)
+      @static if !Sys.isapple() || ObjectiveC.is_unavailable($availability)
+        throw($UnavailableError(Symbol($name), $availability))
+      end
+
       ptr == nil && throw(UndefRefError())
       $instance(ptr)
     end
@@ -391,7 +400,7 @@ propertyerror(s::String) = error("""Objective-C property declaration: $s.
 
 """
     @objcproperties ObjCType begin
-        @autoproperty myProperty::ObjCType [type=JuliaType] [setter=setMyProperty]
+        @autoproperty myProperty::ObjCType [type=JuliaType] [setter=setMyProperty] [getter=getMyProperty] [availability::PlatformAvailability]
 
         @getproperty myProperty function(obj)
             ...
@@ -416,7 +425,8 @@ contains a series of property declarations:
   - `setter`: specifies the name of the Objective-C setter method. Without this, no
     `setproperty!` definition will be generated.
   - `getter`: specifies the name of the Objective-C getter method. Without this, the
-    getter method is assumed to be identical to the property
+    getter method is assumed to be identical to the property.
+  - `availability`: A `PlatformAvailability` object that represents the availability of the property.
 - `@getproperty myProperty function(obj) ... end`: define a custom getter for the property.
   The function should take a single argument `obj`, which is the object that the property is
   being accessed on. The function should return the property value.
@@ -492,6 +502,12 @@ macro objcproperties(typ, ex)
             # caller's module and decide on the appropriate ABI. that necessitates use of
             # :hygienic-scope to handle the mix of esc/hygienic code.
 
+            availability = nothing
+            if haskey(kwargs, :availability)
+                availability = get_avail_exprs(__module__, kwargs[:availability])
+            end
+            availability = something(availability, PlatformAvailability(:macos, v"0"))
+
             getterproperty = if haskey(kwargs, :getter)
                 kwargs[:getter]
             else
@@ -499,6 +515,9 @@ macro objcproperties(typ, ex)
             end
             getproperty_ex = objcm(__module__, :([object::id{$(esc(typ))} $getterproperty]::$srcTyp))
             getproperty_ex = quote
+                @static if !Sys.isapple() || ObjectiveC.is_unavailable($availability)
+                    throw($UnavailableError(Symbol($(esc(typ)), ".", field), $availability))
+                end
                 value = $(Expr(:var"hygienic-scope", getproperty_ex, @__MODULE__, __source__))
             end
 

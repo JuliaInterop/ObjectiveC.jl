@@ -1,6 +1,98 @@
 using ObjectiveC
 using Test
 
+@testset "version" begin
+    @test ObjectiveC.darwin_version() isa VersionNumber
+    @test ObjectiveC.macos_version() isa VersionNumber
+    @test ObjectiveC.is_macos(ObjectiveC.macos_version())
+end
+
+# Availability
+@objcwrapper availability = macos(v"1000") TestWrapperNoIntro1 <: Object
+@objcwrapper availability = macos(introduced = v"1000") TestWrapperNoIntro2 <: Object
+@objcwrapper availability = macos(deprecated = v"1", obsoleted = v"2.3.4") TestWrapperObsolete <: Object
+@objcwrapper availability = macos(introduced = v"1000", unavailable = true) TestWrapperUnavailable <: Object
+@objcwrapper availability = macos(v"0") TestPropAvail <: Object
+@objcproperties TestPropAvail begin
+    @autoproperty length::Culong
+    @autoproperty UTF8String::Ptr{Cchar} availability = macos(v"0")
+    @autoproperty NoIntro1Property::Cint availability = macos(v"1000")
+    @autoproperty NoIntro2Property::Cint availability = macos(introduced = v"1000")
+    @autoproperty ObsoleteProperty::Cint availability = macos(deprecated = v"1", obsoleted = v"2.3")
+    @autoproperty UnavailableProperty::Cint availability = macos(introduced = v"1000", unavailable = true)
+end
+@objcwrapper availability = [macos(v"1000")] TestVectUnavail <: Object
+@objcwrapper availability = [macos(v"1000"), darwin(v"0")] TestVectMultiple1 <: Object
+@objcwrapper availability = [macos(v"0"), darwin(v"1000")] TestVectMultiple2 <: Object
+@objcwrapper availability = [macos(v"0"), darwin(v"0")] TestVectMultiple3 <: Object
+@objcwrapper availability = [macos(v"0")] TestVectAvail <: Object
+@objcproperties TestVectAvail begin
+    @autoproperty length::Culong
+    @autoproperty UTF8String::Ptr{Cchar} availability = [macos(v"0")]
+    @autoproperty VectUnavailableProperty::Cint availability = [darwin(introduced = v"1000")]
+end
+@testset "availability" begin
+    # wrapper
+    let # not yet introduced arg version
+        fakeidwrap = id{TestWrapperNoIntro1}(1)
+        @test_throws "UnavailableError: `TestWrapperNoIntro1` was introduced on macOS v1000.0.0" TestWrapperNoIntro1(fakeidwrap)
+    end
+    let # not yet introduced kwarg version
+        fakeidwrap = id{TestWrapperNoIntro2}(1)
+        @test_throws "UnavailableError: `TestWrapperNoIntro2` was introduced on macOS v1000.0.0" TestWrapperNoIntro2(fakeidwrap)
+    end
+    let # obsolete
+        fakeidwrap = id{TestWrapperObsolete}(1)
+        @test_throws "UnavailableError: `TestWrapperObsolete` is obsolete since macOS v2.3.4" TestWrapperObsolete(fakeidwrap)
+    end
+    let # unavailable
+        fakeidwrap = id{TestWrapperUnavailable}(1)
+        @test_throws "UnavailableError: `TestWrapperUnavailable` is not available on macOS" TestWrapperUnavailable(fakeidwrap)
+    end
+    let # not yet introduced in vector
+        fakeidwrap = id{TestVectUnavail}(1)
+        @test_throws "UnavailableError: `TestVectUnavail` was introduced on macOS v1000.0.0" TestVectUnavail(fakeidwrap)
+    end
+    let # not yet introduced in vector for multiple
+        fakeidwrap = id{TestVectMultiple1}(1)
+        @test_throws "UnavailableError: `TestVectMultiple1` was introduced on macOS v1000.0.0" TestVectMultiple1(fakeidwrap)
+    end
+    let # not yet introduced in vector for multiple
+        fakeidwrap = id{TestVectMultiple2}(1)
+        @test_throws "UnavailableError: `TestVectMultiple2` was introduced on Darwin v1000.0.0" TestVectMultiple2(fakeidwrap)
+    end
+    let # Make sure it does not error
+        fakeidwrap = id{TestVectMultiple3}(1)
+        @test TestVectMultiple3(fakeidwrap) isa TestVectMultiple3
+    end
+
+    # property
+    str1 = "foo"
+    prop = TestPropAvail(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestPropAvail})
+
+    @test :length in propertynames(prop)
+    @test :UTF8String in propertynames(prop)
+    @test :NoIntro1Property in propertynames(prop)
+    @test :NoIntro2Property in propertynames(prop)
+    @test :ObsoleteProperty in propertynames(prop)
+    @test :UnavailableProperty in propertynames(prop)
+
+    @test prop.length == length(str1)
+    @test unsafe_string(prop.UTF8String) == str1
+    @test_throws "UnavailableError: `TestPropAvail.NoIntro1Property` was introduced on macOS v1000.0.0"  prop.NoIntro1Property
+    @test_throws "UnavailableError: `TestPropAvail.NoIntro2Property` was introduced on macOS v1000.0.0"  prop.NoIntro2Property
+    @test_throws "UnavailableError: `TestPropAvail.ObsoleteProperty` is obsolete since macOS v2.3.0" prop.ObsoleteProperty
+    @test_throws "UnavailableError: `TestPropAvail.UnavailableProperty` is not available on macOS" prop.UnavailableProperty
+
+    vectprop = TestVectAvail(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestVectAvail})
+    @test_throws "UnavailableError: `TestVectAvail.VectUnavailableProperty` was introduced on Darwin v1000.0.0"  vectprop.VectUnavailableProperty
+
+    @test_throws "`:templeos` is not a supported platform for `PlatformAvailability`" macroexpand(@__MODULE__, :(@objcwrapper availability = templeos(v"1000") TestBadAvail2 <: Object))
+    @test_throws "`:templeos` is not a supported platform for `PlatformAvailability`" macroexpand(@__MODULE__, :(@objcwrapper availability = [templeos(v"1000")] TestBadAvail3 <: Object))
+    @test_throws "`availability` keyword argument must be a valid `PlatformAvailability`" macroexpand(@__MODULE__, :(@objcwrapper availability = [6] TestBadAvail4 <: Object))
+    @test_throws "`availability` keyword argument must be a valid `PlatformAvailability`" macroexpand(@__MODULE__, :(@objcwrapper availability = 6 TestBadAvail5 <: Object))
+end
+
 @testset "@objc macro" begin
     # class methods
     @objc [NSString new]::id{Object}
