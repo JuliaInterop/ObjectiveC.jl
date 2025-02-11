@@ -22,7 +22,7 @@ struct PlatformAvailability{P}
     unavailable::Bool
 
     function PlatformAvailability(platform::Symbol, introduced, deprecated = nothing, obsoleted = nothing, unavailable = false)
-        platform in first.(SUPPORTED_PLATFORMS) || throw(ArgumentError(lazy"`:$platform` is not a supported platform for `PlatformAvailability`, see `?PlatformAvailabiliy` for more information."))
+        platform in first.(SUPPORTED_PLATFORMS) || throw(ArgumentError(lazy"`:$platform` is not a supported platform for `PlatformAvailability`, see `?PlatformAvailability` for more information."))
         return new{platform}(introduced, deprecated, obsoleted, unavailable)
     end
 end
@@ -77,26 +77,27 @@ for (name, pretty_name, version_function) in SUPPORTED_PLATFORMS
     end
 end
 
-function transform_avail_expr!(expr)
+function get_avail_exprs(mod, expr)
+    transform_avail_exprs!(expr)
+    avail = Base.eval(mod, expr)
+
+    return avail
+end
+
+function transform_avail_exprs!(expr)
     if Meta.isexpr(expr, :vect)
         for availexpr in expr.args
-            _transform_avail_expr!(availexpr)
+            transform_avail_expr!(availexpr)
         end
     else
-        _transform_avail_expr!(expr)
+        transform_avail_expr!(expr)
     end
     return expr
 end
-function _transform_avail_expr!(expr)
+function transform_avail_expr!(expr)
     @assert Meta.isexpr(expr, :call) "`availability` keyword argument must be a valid `PlatformAvailability` constructor or vector."
     expr.args[1] = Meta.quot(expr.args[1])
     insert!(expr.args, 1, :PlatformAvailability)
     return expr
 end
 
-function _getavailability(mod, expr)
-    transform_avail_expr!(expr)
-    avail = Base.eval(mod, expr)
-
-    return avail
-end
