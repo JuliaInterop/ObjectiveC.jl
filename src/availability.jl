@@ -1,7 +1,7 @@
 export PlatformAvailability, UnavailableError
 
 # Each platform tuple has a symbol representing the constructor, a pretty name for errors,
-# and a symbol of the function used to check the version for that platform
+# a symbol of the function used to check the version for that platform
 const SUPPORTED_PLATFORMS = [(:macos, "macOS", :macos_version), (:darwin, "Darwin", :darwin_version)]
 
 # Based off of Clang's `CXPlatformAvailability`
@@ -29,12 +29,12 @@ end
 PlatformAvailability(platform; introduced = nothing, deprecated = nothing, obsoleted = nothing, unavailable = false) =
     PlatformAvailability(platform, introduced, deprecated, obsoleted, unavailable)
 
-function is_unavailable(f::Function, avail::PlatformAvailability)
-    return avail.unavailable ||
-        (!isnothing(avail.obsoleted) && f() >= avail.obsoleted) ||
-        (!isnothing(avail.introduced) && f() < avail.introduced)
+function is_available(f::Function, avail::PlatformAvailability)
+    return !avail.unavailable &&
+        (isnothing(avail.obsoleted) || f() < avail.obsoleted) &&
+        (isnothing(avail.introduced) || f() >= avail.introduced)
 end
-is_unavailable(avails::Vector{<:PlatformAvailability}) = any(is_unavailable.(avails))
+is_available(avails::Vector{<:PlatformAvailability}) = any(is_available.(avails))
 
 """
     UnavailableError(symbol::Symbol, minver::VersionNumber)
@@ -59,7 +59,7 @@ function UnavailableError(f::Function, symbol::Symbol, platform::String, avail::
     return UnavailableError(symbol, msg)
 end
 function UnavailableError(symbol::Symbol, avails::Vector{<:PlatformAvailability})
-    firsterror = findfirst(is_unavailable, avails)
+    firsterror = findfirst(x -> !is_available(x), avails)
     return UnavailableError(symbol, avails[firsterror])
 end
 
@@ -72,7 +72,7 @@ end
 for (name, pretty_name, version_function) in SUPPORTED_PLATFORMS
     quotname = Meta.quot(name)
     @eval begin
-        is_unavailable(avail::PlatformAvailability{$quotname}) = is_unavailable($version_function, avail)
+        is_available(avail::PlatformAvailability{$quotname}) = is_available($version_function, avail)
         UnavailableError(symbol::Symbol, avail::PlatformAvailability{$quotname}) = UnavailableError($version_function, symbol, $pretty_name, avail)
     end
 end
