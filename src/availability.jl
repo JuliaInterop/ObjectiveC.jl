@@ -3,9 +3,11 @@ export PlatformAvailability, UnavailableError
 # Each platform tuple has a symbol representing the constructor, a pretty name for errors,
 # a symbol of the function used to check the version for that platform, and the function that
 # returns whether that statement applies for this device
-const SUPPORTED_PLATFORMS = Dict(:macos => (pretty = "macOS", ver_func = :macos_version, plat_func = Sys.isapple),
-                                 :darwin => (pretty = "Darwin", ver_func = :darwin_version, plat_func = Sys.isapple),
-                                 :test => (pretty = "Never applicable", ver_func = :error, plat_func = () -> false))
+const SUPPORTED_PLATFORMS = Dict(
+    :macos => (pretty = "macOS", ver_func = :macos_version, plat_func = Sys.isapple),
+    :darwin => (pretty = "Darwin", ver_func = :darwin_version, plat_func = Sys.isapple),
+    :test => (pretty = "Never applicable", ver_func = :error, plat_func = () -> false)
+)
 
 # Based off of Clang's `CXPlatformAvailability`
 """
