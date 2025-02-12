@@ -1,12 +1,12 @@
 export PlatformAvailability, UnavailableError
 
-# Each platform tuple has a symbol representing the constructor, a pretty name for errors,
+# Each platform tuple has a symbol representing the constructor, a pretty_name name for errors,
 # a symbol of the function used to check the version for that platform, and the function that
 # returns whether that statement applies for this device
 const SUPPORTED_PLATFORMS = Dict(
-    :macos => (pretty = "macOS", ver_func = :macos_version, plat_func = Sys.isapple),
-    :darwin => (pretty = "Darwin", ver_func = :darwin_version, plat_func = Sys.isapple),
-    :test => (pretty = "Never applicable", ver_func = :error, plat_func = () -> false)
+    :macos => (pretty_name = "macOS", ver_func = :macos_version, plat_func = Sys.isapple),
+    :darwin => (pretty_name = "Darwin", ver_func = :darwin_version, plat_func = Sys.isapple),
+    :test => (pretty_name = "Never applicable", ver_func = :error, plat_func = () -> false)
 )
 
 # Based off of Clang's `CXPlatformAvailability`
@@ -74,11 +74,11 @@ function Base.showerror(io::IO, e::UnavailableError)
 end
 
 # Platform-specific definitions
-for (name, (pretty_name, version_function)) in SUPPORTED_PLATFORMS
+for (name, (pretty_name, ver_func, plat_func)) in SUPPORTED_PLATFORMS
     quotname = Meta.quot(name)
     @eval begin
-        is_available(avail::PlatformAvailability{$quotname}) = !SUPPORTED_PLATFORMS[$quotname].plat_func() || is_available($version_function, avail)
-        UnavailableError(symbol::Symbol, avail::PlatformAvailability{$quotname}) = UnavailableError($version_function, symbol, $pretty_name, avail)
+        is_available(avail::PlatformAvailability{$quotname}) = !$plat_func() || is_available($ver_func, avail)
+        UnavailableError(symbol::Symbol, avail::PlatformAvailability{$quotname}) = UnavailableError($ver_func, symbol, $pretty_name, avail)
     end
 end
 
