@@ -19,16 +19,14 @@ The currently supported values for `platform` are:
 - `:darwin`: for Darwin kernel availability
 """
 struct PlatformAvailability{P}
-    appl_plat::Bool # Is this Availability object applicable on this system
     introduced::Union{Nothing, VersionNumber}
     deprecated::Union{Nothing, VersionNumber}
     obsoleted::Union{Nothing, VersionNumber}
     unavailable::Bool
 
-
     function PlatformAvailability(p::Symbol, introduced, deprecated = nothing, obsoleted = nothing, unavailable = false)
         haskey(SUPPORTED_PLATFORMS, p) || throw(ArgumentError(lazy"`:$p` is not a supported platform for `PlatformAvailability`, see `?PlatformAvailability` for more information."))
-        return new{p}(SUPPORTED_PLATFORMS[p].plat_func(), introduced, deprecated, obsoleted, unavailable)
+        return new{p}(introduced, deprecated, obsoleted, unavailable)
     end
 end
 PlatformAvailability(platform; introduced = nothing, deprecated = nothing, obsoleted = nothing, unavailable = false) =
@@ -77,7 +75,7 @@ end
 for (name, (pretty_name, version_function)) in SUPPORTED_PLATFORMS
     quotname = Meta.quot(name)
     @eval begin
-        is_available(avail::PlatformAvailability{$quotname}) = !avail.appl_plat || is_available($version_function, avail)
+        is_available(avail::PlatformAvailability{$quotname}) = !SUPPORTED_PLATFORMS[$quotname].plat_func() || is_available($version_function, avail)
         UnavailableError(symbol::Symbol, avail::PlatformAvailability{$quotname}) = UnavailableError($version_function, symbol, $pretty_name, avail)
     end
 end
