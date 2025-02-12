@@ -4,9 +4,9 @@ export PlatformAvailability, UnavailableError
 # a symbol of the function used to check the version for that platform, and the function that
 # returns whether that statement applies for this device
 const SUPPORTED_PLATFORMS = Dict(
-    :macos => (pretty_name = "macOS", ver_func = :macos_version, plat_func = Sys.isapple),
-    :darwin => (pretty_name = "Darwin", ver_func = :darwin_version, plat_func = Sys.isapple),
-    :test => (pretty_name = "Never applicable", ver_func = :error, plat_func = () -> false)
+    :macos => ("macOS", :macos_version, Sys.isapple),
+    :darwin => ("Darwin", :darwin_version, Sys.isapple),
+    :test => ("Never applicable", :error, () -> false)
 )
 
 # Based off of Clang's `CXPlatformAvailability`
