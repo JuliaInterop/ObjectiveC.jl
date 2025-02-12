@@ -10,6 +10,7 @@ end
 # Availability
 @objcwrapper availability = macos(v"1000") TestWrapperNoIntro1 <: Object
 @objcwrapper availability = macos(introduced = v"1000") TestWrapperNoIntro2 <: Object
+@objcwrapper availability = test(introduced = v"1000") TestIgnore <: Object
 @objcwrapper availability = macos(deprecated = v"1", obsoleted = v"2.3.4") TestWrapperObsolete <: Object
 @objcwrapper availability = macos(introduced = v"1000", unavailable = true) TestWrapperUnavailable <: Object
 @objcwrapper availability = macos(v"0") TestPropAvail <: Object
@@ -25,6 +26,7 @@ end
 @objcwrapper availability = [macos(v"1000"), darwin(v"0")] TestVectMultiple1 <: Object
 @objcwrapper availability = [macos(v"0"), darwin(v"1000")] TestVectMultiple2 <: Object
 @objcwrapper availability = [macos(v"0"), darwin(v"0")] TestVectMultiple3 <: Object
+@objcwrapper availability = [macos(v"0"), test(v"1000")] TestVectMultiple4 <: Object
 @objcwrapper availability = [macos(v"0")] TestVectAvail <: Object
 @objcproperties TestVectAvail begin
     @autoproperty length::Culong
@@ -40,6 +42,10 @@ end
     let # not yet introduced kwarg version
         fakeidwrap = id{TestWrapperNoIntro2}(1)
         @test_throws "UnavailableError: `TestWrapperNoIntro2` was introduced on macOS v1000.0.0" TestWrapperNoIntro2(fakeidwrap)
+    end
+    let # Not-applicable platform ignored
+        fakeidwrap = id{TestIgnore}(1)
+        @test TestIgnore(fakeidwrap) isa TestIgnore
     end
     let # obsolete
         fakeidwrap = id{TestWrapperObsolete}(1)
@@ -64,6 +70,10 @@ end
     let # Make sure it does not error
         fakeidwrap = id{TestVectMultiple3}(1)
         @test TestVectMultiple3(fakeidwrap) isa TestVectMultiple3
+    end
+    let # Not-applicable platform ignored
+        fakeidwrap = id{TestVectMultiple4}(1)
+        @test TestVectMultiple4(fakeidwrap) isa TestVectMultiple4
     end
 
     # property
