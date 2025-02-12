@@ -84,9 +84,6 @@ end
 function get_avail_exprs(mod, expr)
     transform_avail_exprs!(expr)
     avail = Base.eval(mod, expr)
-    # if !(avail isa Vector)
-    #     avail = [avail]
-    # end
 
     return avail
 end
