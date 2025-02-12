@@ -3,9 +3,9 @@ export PlatformAvailability, UnavailableError
 # Each platform tuple has a symbol representing the constructor, a pretty name for errors,
 # a symbol of the function used to check the version for that platform, and the function that
 # returns whether that statement applies for this device
-const SUPPORTED_PLATFORMS = Dict(:macos => ("macOS", :macos_version, Sys.isapple),
-                                 :darwin => ("Darwin", :darwin_version, Sys.isapple),
-                                 :test => ("Never applicable", :error, () -> false))
+const SUPPORTED_PLATFORMS = Dict(:macos => (pretty = "macOS", ver_func = :macos_version, plat_func = Sys.isapple),
+                                 :darwin => (pretty = "Darwin", ver_func = :darwin_version, plat_func = Sys.isapple),
+                                 :test => (pretty = "Never applicable", ver_func = :error, plat_func = () -> false))
 
 # Based off of Clang's `CXPlatformAvailability`
 """
@@ -25,9 +25,10 @@ struct PlatformAvailability{P}
     obsoleted::Union{Nothing, VersionNumber}
     unavailable::Bool
 
-    function PlatformAvailability(platform::Symbol, introduced, deprecated = nothing, obsoleted = nothing, unavailable = false)
-        haskey(SUPPORTED_PLATFORMS, platform) || throw(ArgumentError(lazy"`:$platform` is not a supported platform for `PlatformAvailability`, see `?PlatformAvailability` for more information."))
-        return new{platform}(SUPPORTED_PLATFORMS[platform][3](), introduced, deprecated, obsoleted, unavailable)
+
+    function PlatformAvailability(p::Symbol, introduced, deprecated = nothing, obsoleted = nothing, unavailable = false)
+        haskey(SUPPORTED_PLATFORMS, p) || throw(ArgumentError(lazy"`:$p` is not a supported platform for `PlatformAvailability`, see `?PlatformAvailability` for more information."))
+        return new{p}(SUPPORTED_PLATFORMS[p].plat_func(), introduced, deprecated, obsoleted, unavailable)
     end
 end
 PlatformAvailability(platform; introduced = nothing, deprecated = nothing, obsoleted = nothing, unavailable = false) =
