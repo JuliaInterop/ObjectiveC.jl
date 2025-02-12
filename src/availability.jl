@@ -64,7 +64,7 @@ function UnavailableError(f::Function, symbol::Symbol, platform::String, avail::
     return UnavailableError(symbol, msg)
 end
 function UnavailableError(symbol::Symbol, avails::Vector{<:PlatformAvailability})
-    firsterror = findfirst(x -> !is_available(x), avails)
+    firsterror = findfirst(!is_available, avails)
     return UnavailableError(symbol, avails[firsterror])
 end
 
