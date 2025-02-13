@@ -1,8 +1,13 @@
 export PlatformAvailability, UnavailableError
 
-# Each platform tuple has a symbol representing the constructor, a pretty name for errors,
-# and a symbol of the function used to check the version for that platform
-const SUPPORTED_PLATFORMS = [(:macos, "macOS", :macos_version), (:darwin, "Darwin", :darwin_version)]
+# Each platform tuple has a symbol representing the constructor, a pretty_name name for errors,
+# a symbol of the function used to check the version for that platform, and the function that
+# returns whether that statement applies for this device
+const SUPPORTED_PLATFORMS = Dict(
+    :macos => ("macOS", :macos_version, Sys.isapple),
+    :darwin => ("Darwin", :darwin_version, Sys.isapple),
+    :test => ("Never applicable", :error, () -> false)
+)
 
 # Based off of Clang's `CXPlatformAvailability`
 """
@@ -21,20 +26,20 @@ struct PlatformAvailability{P}
     obsoleted::Union{Nothing, VersionNumber}
     unavailable::Bool
 
-    function PlatformAvailability(platform::Symbol, introduced, deprecated = nothing, obsoleted = nothing, unavailable = false)
-        platform in first.(SUPPORTED_PLATFORMS) || throw(ArgumentError(lazy"`:$platform` is not a supported platform for `PlatformAvailability`, see `?PlatformAvailability` for more information."))
-        return new{platform}(introduced, deprecated, obsoleted, unavailable)
+    function PlatformAvailability(p::Symbol, introduced, deprecated = nothing, obsoleted = nothing, unavailable = false)
+        haskey(SUPPORTED_PLATFORMS, p) || throw(ArgumentError(lazy"`:$p` is not a supported platform for `PlatformAvailability`, see `?PlatformAvailability` for more information."))
+        return new{p}(introduced, deprecated, obsoleted, unavailable)
     end
 end
 PlatformAvailability(platform; introduced = nothing, deprecated = nothing, obsoleted = nothing, unavailable = false) =
     PlatformAvailability(platform, introduced, deprecated, obsoleted, unavailable)
 
-function is_unavailable(f::Function, avail::PlatformAvailability)
-    return avail.unavailable ||
-        (!isnothing(avail.obsoleted) && f() >= avail.obsoleted) ||
-        (!isnothing(avail.introduced) && f() < avail.introduced)
+function is_available(f::Function, avail::PlatformAvailability)
+    return !avail.unavailable &&
+        (isnothing(avail.obsoleted) || f() < avail.obsoleted) &&
+        (isnothing(avail.introduced) || f() >= avail.introduced)
 end
-is_unavailable(avails::Vector{<:PlatformAvailability}) = any(is_unavailable.(avails))
+is_available(avails::Vector{<:PlatformAvailability}) = all(is_available.(avails))
 
 """
     UnavailableError(symbol::Symbol, minver::VersionNumber)
@@ -59,7 +64,7 @@ function UnavailableError(f::Function, symbol::Symbol, platform::String, avail::
     return UnavailableError(symbol, msg)
 end
 function UnavailableError(symbol::Symbol, avails::Vector{<:PlatformAvailability})
-    firsterror = findfirst(is_unavailable, avails)
+    firsterror = findfirst(!is_available, avails)
     return UnavailableError(symbol, avails[firsterror])
 end
 
@@ -69,11 +74,11 @@ function Base.showerror(io::IO, e::UnavailableError)
 end
 
 # Platform-specific definitions
-for (name, pretty_name, version_function) in SUPPORTED_PLATFORMS
+for (name, (pretty_name, ver_func, plat_func)) in SUPPORTED_PLATFORMS
     quotname = Meta.quot(name)
     @eval begin
-        is_unavailable(avail::PlatformAvailability{$quotname}) = is_unavailable($version_function, avail)
-        UnavailableError(symbol::Symbol, avail::PlatformAvailability{$quotname}) = UnavailableError($version_function, symbol, $pretty_name, avail)
+        is_available(avail::PlatformAvailability{$quotname}) = !$plat_func() || is_available($ver_func, avail)
+        UnavailableError(symbol::Symbol, avail::PlatformAvailability{$quotname}) = UnavailableError($ver_func, symbol, $pretty_name, avail)
     end
 end
 

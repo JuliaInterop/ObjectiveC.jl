@@ -311,7 +311,7 @@ macro objcwrapper(ex...)
   end
   immutable = something(immutable, true)
   comparison = something(comparison, !immutable)
-  availability = something(availability, PlatformAvailability(:macos, v"0"))
+  availability = something(availability, PlatformAvailability[])
 
   # parse class definition
   if Meta.isexpr(def, :(<:))
@@ -352,7 +352,7 @@ macro objcwrapper(ex...)
 
     # add a pseudo constructor to the abstract type that also checks for nil pointers.
     function $name(ptr::id)
-      @static if !Sys.isapple() || ObjectiveC.is_unavailable($availability)
+      @static if !ObjectiveC.is_available($availability)
         throw($UnavailableError(Symbol($name), $availability))
       end
 
@@ -506,7 +506,7 @@ macro objcproperties(typ, ex)
             if haskey(kwargs, :availability)
                 availability = get_avail_exprs(__module__, kwargs[:availability])
             end
-            availability = something(availability, PlatformAvailability(:macos, v"0"))
+            availability = something(availability, PlatformAvailability[])
 
             getterproperty = if haskey(kwargs, :getter)
                 kwargs[:getter]
@@ -515,7 +515,7 @@ macro objcproperties(typ, ex)
             end
             getproperty_ex = objcm(__module__, :([object::id{$(esc(typ))} $getterproperty]::$srcTyp))
             getproperty_ex = quote
-                @static if !Sys.isapple() || ObjectiveC.is_unavailable($availability)
+                @static if !ObjectiveC.is_available($availability)
                     throw($UnavailableError(Symbol($(esc(typ)), ".", field), $availability))
                 end
                 value = $(Expr(:var"hygienic-scope", getproperty_ex, @__MODULE__, __source__))
