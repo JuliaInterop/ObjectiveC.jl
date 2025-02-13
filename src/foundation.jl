@@ -213,7 +213,7 @@ NSDecimalNumber(; mantissa, exponent, negative) =
                                                           isNegative:negative::Bool]::id{NSDecimalNumber})
 
 # conversions
-Float64(dec::NSDecimal) = NSDecimalNumber(dec).doubleValue
+Core.Float64(dec::NSDecimal) = NSDecimalNumber(dec).doubleValue
 NSDecimal(dec::NSDecimalNumber) = dec.decimalValue
 
 # fixed values
