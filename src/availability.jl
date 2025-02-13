@@ -34,7 +34,7 @@ end
 PlatformAvailability(platform; introduced = nothing, deprecated = nothing, obsoleted = nothing, unavailable = false) =
     PlatformAvailability(platform, introduced, deprecated, obsoleted, unavailable)
 
-function is_available(f::Function, avail::PlatformAvailability)
+function is_available(f, avail::PlatformAvailability)
     return !avail.unavailable &&
         (isnothing(avail.obsoleted) || f() < avail.obsoleted) &&
         (isnothing(avail.introduced) || f() >= avail.introduced)
@@ -51,7 +51,7 @@ struct UnavailableError <: Exception
     symbol::Symbol
     msg::String
 end
-function UnavailableError(f::Function, symbol::Symbol, platform::String, avail::PlatformAvailability)
+function UnavailableError(f, symbol::Symbol, platform::String, avail::PlatformAvailability)
     msg = if avail.unavailable
         "is not available on $platform"
     elseif !isnothing(avail.obsoleted) && f() >= avail.obsoleted
