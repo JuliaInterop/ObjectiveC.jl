@@ -8,14 +8,14 @@ callerror(msg) = error("""ObjectiveC call: $msg
 
 # convert a vcat to a hcat so that we can split the @objc expressions into multiple lines
 function flatvcat(ex::Expr)
-  any(ex->Meta.isexpr(ex, :row), ex.args) || return ex
-  flat = Expr(:hcat)
-  for row in ex.args
-    Meta.isexpr(row, :row) ?
-      push!(flat.args, row.args...) :
-      push!(flat.args, row)
-  end
-  return flat
+    any(ex->Meta.isexpr(ex, :row), ex.args) || return ex
+    flat = Expr(:hcat)
+    for row in ex.args
+        Meta.isexpr(row, :row) ?
+            push!(flat.args, row.args...) :
+            push!(flat.args, row)
+    end
+    return flat
 end
 
 function objcm(mod, ex)
@@ -30,7 +30,7 @@ function objcm(mod, ex)
 
     # parse the call
     if Meta.isexpr(call, :vcat)
-      call = flatvcat(call)
+        call = flatvcat(call)
     end
     Meta.isexpr(call, :hcat) || return esc(call)
     obj, method, args... = call.args
@@ -40,11 +40,11 @@ function objcm(mod, ex)
     function parse_argument(arg; named=true)
         # name before the parameter (name:value::type) is optional
         if Meta.isexpr(arg, :call) && arg.args[1] == :(:)
-          # form: name:value::typ
-          name = String(arg.args[2])
-          arg = arg.args[3]
+            # form: name:value::typ
+            name = String(arg.args[2])
+            arg = arg.args[3]
         else
-          name = nothing
+            name = nothing
         end
         push!(argnames, name)
 
@@ -108,17 +108,17 @@ end
 # argument renderers, for tracing functionality
 render(io, obj) = Core.print(io, repr(obj))
 function render(io, ptr::id{T}) where T
-  Core.print(io, "(id<", String(T.name.name), ">)0x", string(UInt(ptr), base=16, pad = Sys.WORD_SIZE>>2))
+    Core.print(io, "(id<", String(T.name.name), ">)0x", string(UInt(ptr), base=16, pad = Sys.WORD_SIZE>>2))
 end
 function render(io, ptr::Ptr{T}) where T
-  Core.print(io, "(", String(T.name.name), "*)0x", string(UInt(ptr), base=16, pad = Sys.WORD_SIZE>>2))
+    Core.print(io, "(", String(T.name.name), "*)0x", string(UInt(ptr), base=16, pad = Sys.WORD_SIZE>>2))
 end
 ## mimic ccall's conversion
 function render_c_arg(io, obj, typ)
-  GC.@preserve obj begin
-    ptr = Base.unsafe_convert(typ, Base.cconvert(typ, obj))
-    render(io, ptr)
-  end
+    GC.@preserve obj begin
+        ptr = Base.unsafe_convert(typ, Base.cconvert(typ, obj))
+        render(io, ptr)
+    end
 end
 
 # ensure that the GC can run during a ccall. this is only safe if callbacks
@@ -129,41 +129,41 @@ end
 #
 # TODO: replace with JuliaLang/julia#49933 once merged
 function make_gcsafe(ex)
-  # decode the ccall
-  if !Meta.isexpr(ex, :call) || ex.args[1] != :ccall
-    error("Can only make ccall expressions GC-safe")
-  end
-  target = ex.args[2]
-  rettyp = ex.args[3]
-  argtypes = ex.args[4].args
-  args = ex.args[5:end]
-
-  code = quote
-  end
-
-  # assign argument values to variables
-  vars = [Symbol("arg$i") for i in 1:length(args)]
-  for (var, arg) in zip(vars, args)
-    push!(code.args, :($var = $arg))
-  end
-
-  # convert the arguments
-  converted = [Symbol("converted_arg$i") for i in 1:length(args)]
-  for (converted, argtyp, var) in zip(converted, argtypes, vars)
-    push!(code.args, :($converted = Base.unsafe_convert($argtyp, Base.cconvert($argtyp, $var))))
-  end
-
-  # emit a gcsafe ccall
-  append!(code.args, (quote
-    GC.@preserve $(vars...) begin
-      gc_state = ccall(:jl_gc_safe_enter, Int8, ())
-      ret = ccall($target, $rettyp, ($(argtypes...),), $(converted...))
-      ccall(:jl_gc_safe_leave, Cvoid, (Int8,), gc_state)
-      ret
+    # decode the ccall
+    if !Meta.isexpr(ex, :call) || ex.args[1] != :ccall
+        error("Can only make ccall expressions GC-safe")
     end
-  end).args)
+    target = ex.args[2]
+    rettyp = ex.args[3]
+    argtypes = ex.args[4].args
+    args = ex.args[5:end]
 
-  return code
+    code = quote
+    end
+
+    # assign argument values to variables
+    vars = [Symbol("arg$i") for i in 1:length(args)]
+    for (var, arg) in zip(vars, args)
+        push!(code.args, :($var = $arg))
+    end
+
+    # convert the arguments
+    converted = [Symbol("converted_arg$i") for i in 1:length(args)]
+    for (converted, argtyp, var) in zip(converted, argtypes, vars)
+        push!(code.args, :($converted = Base.unsafe_convert($argtyp, Base.cconvert($argtyp, $var))))
+    end
+
+    # emit a gcsafe ccall
+    append!(code.args, (quote
+        GC.@preserve $(vars...) begin
+            gc_state = ccall(:jl_gc_safe_enter, Int8, ())
+            ret = ccall($target, $rettyp, ($(argtypes...),), $(converted...))
+            ccall(:jl_gc_safe_leave, Cvoid, (Int8,), gc_state)
+            ret
+        end
+    end).args)
+
+    return code
 end
 
 function class_message(class_name, msg, rettyp, argtyps, argvals)
@@ -198,9 +198,9 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
         )
         @static if $tracing
             if $rettyp !== Nothing
-              Core.print(io, "  ")
-              render(io, ret)
-              Core.println(io)
+                Core.print(io, "  ")
+                render(io, ret)
+                Core.println(io)
             end
         end
         ret
@@ -241,9 +241,9 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals)
         )
         @static if $tracing
             if $rettyp !== Nothing
-              Core.print(io, "  ")
-              render(io, ret)
-              Core.println(io)
+                Core.print(io, "  ")
+                render(io, ret)
+                Core.println(io)
             end
         end
         ret
@@ -252,7 +252,7 @@ end
 
 # TODO: support availability
 macro objc(ex)
-  objcm(__module__, ex)
+    objcm(__module__, ex)
 end
 
 # Wrapper Classes
@@ -284,94 +284,94 @@ keyword arguments:
     case the default `==` and `hash` methods are sufficient.
 """
 macro objcwrapper(ex...)
-  def = ex[end]
-  kwargs = ex[1:end-1]
+    def = ex[end]
+    kwargs = ex[1:end-1]
 
-  # parse kwargs
-  comparison = nothing
-  immutable = nothing
-  availability = nothing
-  for kw in kwargs
-    if kw isa Expr && kw.head == :(=)
-      kw, value = kw.args
-      if kw == :comparison
-        value isa Bool || wrappererror("comparison keyword argument must be a literal boolean")
-        comparison = value
-      elseif kw == :immutable
-        value isa Bool || wrappererror("immutable keyword argument must be a literal boolean")
-        immutable = value
-      elseif kw == :availability
-        availability = get_avail_exprs(__module__, value)
-      else
-        wrappererror("unrecognized keyword argument: $kw")
-      end
+    # parse kwargs
+    comparison = nothing
+    immutable = nothing
+    availability = nothing
+    for kw in kwargs
+        if kw isa Expr && kw.head == :(=)
+            kw, value = kw.args
+            if kw == :comparison
+                value isa Bool || wrappererror("comparison keyword argument must be a literal boolean")
+                comparison = value
+            elseif kw == :immutable
+                value isa Bool || wrappererror("immutable keyword argument must be a literal boolean")
+                immutable = value
+            elseif kw == :availability
+                availability = get_avail_exprs(__module__, value)
+            else
+                wrappererror("unrecognized keyword argument: $kw")
+            end
+        else
+            wrappererror("invalid keyword argument: $kw")
+        end
+    end
+    immutable = something(immutable, true)
+    comparison = something(comparison, !immutable)
+    availability = something(availability, PlatformAvailability[])
+
+    # parse class definition
+    if Meta.isexpr(def, :(<:))
+        name, super = def.args
+    elseif def isa Symbol
+        name = def
+        super = Object
     else
-      wrappererror("invalid keyword argument: $kw")
+        wrappererror()
     end
-  end
-  immutable = something(immutable, true)
-  comparison = something(comparison, !immutable)
-  availability = something(availability, PlatformAvailability[])
 
-  # parse class definition
-  if Meta.isexpr(def, :(<:))
-    name, super = def.args
-  elseif def isa Symbol
-    name = def
-    super = Object
-  else
-    wrappererror()
-  end
-
-  # generate type hierarchy
-  ex = quote
-    abstract type $name <: $super end
-  end
-
-  # generate the instance class
-  instance = Symbol(name, "Instance")
-  ex = if immutable
-    quote
-      $(ex.args...)
-      struct $instance <: $name
-        ptr::id{$name}
-      end
-    end
-  else
-    quote
-      $(ex.args...)
-      mutable struct $instance <: $name
-        ptr::id{$name}
-      end
-    end
-  end
-
-  # add essential methods
-  ex = quote
-    $(ex.args...)
-
-    # add a pseudo constructor to the abstract type that also checks for nil pointers.
-    function $name(ptr::id)
-      @static if !ObjectiveC.is_available($availability)
-        throw($UnavailableError(Symbol($name), $availability))
-      end
-
-      ptr == nil && throw(UndefRefError())
-      $instance(ptr)
-    end
-  end
-
-  # add optional methods
-  if comparison
+    # generate type hierarchy
     ex = quote
-      $(ex.args...)
-
-      Base.:(==)(a::$instance, b::$instance) = pointer(a) == pointer(b)
-      Base.hash(obj::$instance, h::UInt) = hash(pointer(obj), h)
+        abstract type $name <: $super end
     end
-  end
 
-  esc(ex)
+    # generate the instance class
+    instance = Symbol(name, "Instance")
+    ex = if immutable
+        quote
+            $(ex.args...)
+            struct $instance <: $name
+                ptr::id{$name}
+            end
+        end
+    else
+        quote
+            $(ex.args...)
+            mutable struct $instance <: $name
+                ptr::id{$name}
+            end
+        end
+    end
+
+    # add essential methods
+    ex = quote
+        $(ex.args...)
+
+        # add a pseudo constructor to the abstract type that also checks for nil pointers.
+        function $name(ptr::id)
+            @static if !ObjectiveC.is_available($availability)
+                throw($UnavailableError(Symbol($name), $availability))
+            end
+
+            ptr == nil && throw(UndefRefError())
+            $instance(ptr)
+        end
+    end
+
+    # add optional methods
+    if comparison
+        ex = quote
+            $(ex.args...)
+
+            Base.:(==)(a::$instance, b::$instance) = pointer(a) == pointer(b)
+            Base.hash(obj::$instance, h::UInt) = hash(pointer(obj), h)
+        end
+    end
+
+    esc(ex)
 end
 
 Base.pointer(obj::Object) = obj.ptr
@@ -382,13 +382,13 @@ Base.unsafe_convert(T::Type{<:id}, obj::Object) = convert(T, pointer(obj))
 # when passing an array of objects, perform recursive conversion to object pointers
 # this is similar to Base.RefArray, which is used for conversion to regular pointers.
 struct idArray{T}
-  ids::Vector{id{T}}
-  roots::Vector{<:Object}
+    ids::Vector{id{T}}
+    roots::Vector{<:Object}
 end
 Base.cconvert(T::Type{<:id}, objs::Vector{<:Object}) =
-  idArray{eltype(T)}([pointer(obj) for obj in objs], objs)
+    idArray{eltype(T)}([pointer(obj) for obj in objs], objs)
 Base.unsafe_convert(T::Type{<:id}, arr::idArray) =
-  reinterpret(T, pointer(arr.ids))
+    reinterpret(T, pointer(arr.ids))
 
 
 # Property Accesors
@@ -581,66 +581,66 @@ macro objcproperties(typ, ex)
             return properties
         end
         function Base.propertynames(::$(esc(typ)))
-          $ObjectiveC.objc_propertynames($(esc(typ)))
+            $ObjectiveC.objc_propertynames($(esc(typ)))
         end
     end
 
     # generate `Base.getproperty` definition, if needed
     getproperties_ex = quote end
     if !isempty(read_properties)
-      current = nothing
-      for (property, body) in read_properties
-          test = :(field === $(QuoteNode(property)))
-          if current === nothing
-              current = Expr(:if, test, body)
-              getproperties_ex = current
-          else
-              new = Expr(:elseif, test, body)
-              push!(current.args, new)
-              current = new
-          end
-      end
+        current = nothing
+        for (property, body) in read_properties
+            test = :(field === $(QuoteNode(property)))
+            if current === nothing
+                current = Expr(:if, test, body)
+                getproperties_ex = current
+            else
+                new = Expr(:elseif, test, body)
+                push!(current.args, new)
+                current = new
+            end
+        end
 
-      # finally, call our parent's `getproperty`
-      final = :(@inline invoke(getproperty,
-                               Tuple{supertype($(esc(typ))), Symbol},
-                               object, field))
-      push!(current.args, final)
-      getproperties_ex = quote
-          # XXX: force const-prop on field, without inlining everything?
-          function Base.getproperty(object::$(esc(typ)), field::Symbol)
-            $getproperties_ex
-          end
-      end
+        # finally, call our parent's `getproperty`
+        final = :(@inline invoke(getproperty,
+                                 Tuple{supertype($(esc(typ))), Symbol},
+                                 object, field))
+        push!(current.args, final)
+        getproperties_ex = quote
+            # XXX: force const-prop on field, without inlining everything?
+            function Base.getproperty(object::$(esc(typ)), field::Symbol)
+                $getproperties_ex
+            end
+        end
     end
 
     # generate `Base.setproperty!` definition, if needed
     setproperties_ex = quote end
     if !isempty(write_properties)
-      current = nothing
-      for (property, body) in write_properties
-          test = :(field === $(QuoteNode(property)))
-          if current === nothing
-              current = Expr(:if, test, body)
-              setproperties_ex = current
-          else
-              new = Expr(:elseif, test, body)
-              push!(current.args, new)
-              current = new
-          end
-      end
+        current = nothing
+        for (property, body) in write_properties
+            test = :(field === $(QuoteNode(property)))
+            if current === nothing
+                current = Expr(:if, test, body)
+                setproperties_ex = current
+            else
+                new = Expr(:elseif, test, body)
+                push!(current.args, new)
+                current = new
+            end
+        end
 
-      # finally, call our parent's `setproperty!`
-      final = :(@inline invoke(setproperty!,
-                               Tuple{supertype($(esc(typ))), Symbol, Any},
-                               object, field, value))
-      push!(current.args, final)
-      setproperties_ex = quote
-          # XXX: force const-prop on field, without inlining everything?
-          function Base.setproperty!(object::$(esc(typ)), field::Symbol, value::Any)
-            $setproperties_ex
-          end
-      end
+        # finally, call our parent's `setproperty!`
+        final = :(@inline invoke(setproperty!,
+                                 Tuple{supertype($(esc(typ))), Symbol, Any},
+                                 object, field, value))
+        push!(current.args, final)
+        setproperties_ex = quote
+            # XXX: force const-prop on field, without inlining everything?
+            function Base.setproperty!(object::$(esc(typ)), field::Symbol, value::Any)
+                $setproperties_ex
+            end
+        end
     end
 
     return quote

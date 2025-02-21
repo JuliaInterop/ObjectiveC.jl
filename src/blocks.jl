@@ -32,22 +32,22 @@ end
 # NSBlocks are untracked by the Julia GC, so we need to manually root the Julia objects
 const julia_block_roots = Dict{NSBlock,JuliaBlock}()
 function julia_block_copy(_dst, _src)
-  dst_nsblock = NSBlock(reinterpret(id{NSBlock}, _dst))
-  src_nsblock = NSBlock(reinterpret(id{NSBlock}, _src))
+    dst_nsblock = NSBlock(reinterpret(id{NSBlock}, _dst))
+    src_nsblock = NSBlock(reinterpret(id{NSBlock}, _src))
 
-  @assert haskey(julia_block_roots, src_nsblock)
-  julia_block_roots[dst_nsblock] = julia_block_roots[src_nsblock]
+    @assert haskey(julia_block_roots, src_nsblock)
+    julia_block_roots[dst_nsblock] = julia_block_roots[src_nsblock]
 
-  return
+    return
 end
 function julia_block_dispose(_block)
-  block = unsafe_load(_block)
-  nsblock = NSBlock(reinterpret(id{NSBlock}, _block))
+    block = unsafe_load(_block)
+    nsblock = NSBlock(reinterpret(id{NSBlock}, _block))
 
-  @assert haskey(julia_block_roots, nsblock)
-  delete!(julia_block_roots, nsblock)
+    @assert haskey(julia_block_roots, nsblock)
+    delete!(julia_block_roots, nsblock)
 
-  return
+    return
 end
 
 # JuliaBlock is the concrete version of NSBlock, so make it possible to derive a regular
@@ -78,13 +78,13 @@ const julia_block_descriptor_initialized = Ref{Bool}(false)
 function JuliaBlock(trampoline, callable)
     # lazily create a descriptor (these sometimes don't precompile properly)
     if !julia_block_descriptor_initialized[]
-      # simple cfunctions, so don't need to be rooted
-      copy_cb = @cfunction(julia_block_copy, Nothing, (Ptr{JuliaBlock}, Ptr{JuliaBlock}))
-      dispose_cb = @cfunction(julia_block_dispose, Nothing, (Ptr{JuliaBlock},))
+        # simple cfunctions, so don't need to be rooted
+        copy_cb = @cfunction(julia_block_copy, Nothing, (Ptr{JuliaBlock}, Ptr{JuliaBlock}))
+        dispose_cb = @cfunction(julia_block_dispose, Nothing, (Ptr{JuliaBlock},))
 
-      julia_block_descriptor[] = JuliaBlockDescriptor(0, sizeof(JuliaBlock),
-                                                      copy_cb, dispose_cb)
-      julia_block_descriptor_initialized[] = true
+        julia_block_descriptor[] = JuliaBlockDescriptor(0, sizeof(JuliaBlock),
+                                                        copy_cb, dispose_cb)
+        julia_block_descriptor_initialized[] = true
     end
 
     # set-up the block data structures
@@ -183,10 +183,10 @@ const julia_async_block_descriptor_initialized = Ref{Bool}(false)
 function JuliaAsyncBlock(cond)
     # lazily create a descriptor (these sometimes don't precompile properly)
     if !julia_async_block_descriptor_initialized[]
-      # simple cfunctions, so don't need to be rooted
-      julia_async_block_descriptor[] = JuliaAsyncBlockDescriptor(0, sizeof(JuliaAsyncBlock),
-                                                                 C_NULL, C_NULL)
-      julia_async_block_descriptor_initialized[] = true
+        # simple cfunctions, so don't need to be rooted
+        julia_async_block_descriptor[] = JuliaAsyncBlockDescriptor(0, sizeof(JuliaAsyncBlock),
+                                                                    C_NULL, C_NULL)
+        julia_async_block_descriptor_initialized[] = true
     end
 
     # create a trampoline to wake libuv with the user-provided condition
