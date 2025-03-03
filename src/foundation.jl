@@ -7,11 +7,11 @@ using ..CEnum
 export NSInteger, MSIntegerMin, NSIntegerMax, NSUInteger, NSUIntegerMax
 
 if sizeof(Ptr{Cvoid}) == 8
-  const NSInteger = Int64
-  const NSUInteger = UInt64
+    const NSInteger = Int64
+    const NSUInteger = UInt64
 else
-  const NSInteger = Int32
-  const NSUInteger = UInt32
+    const NSInteger = Int32
+    const NSUInteger = UInt32
 end
 const NSIntegerMin = typemin(NSInteger)
 const NSIntegerMax = typemax(NSInteger)
@@ -34,11 +34,11 @@ export NSObject, retain, release, autorelease, is_kind_of
 end
 
 function Base.show(io::IO, ::MIME"text/plain", obj::NSObject)
-  if get(io, :compact, false)
-    print(io, String(obj.description))
-  else
-    print(io, String(obj.debugDescription))
-  end
+    if get(io, :compact, false)
+        print(io, String(obj.description))
+    else
+        print(io, String(obj.debugDescription))
+    end
 end
 
 release(obj::NSObject) = @objc [obj::id{NSObject} release]::Cvoid
@@ -50,11 +50,11 @@ retain(obj::NSObject) = @objc [obj::id{NSObject} retain]::Cvoid
 ObjectiveC.class(obj::NSObject) = @objc [obj::id{NSObject} class]::Class
 
 function is_kind_of(obj::NSObject, class::Class)
-  @objc [obj::id{NSObject} isKindOfClass:class::Class]::Bool
+    @objc [obj::id{NSObject} isKindOfClass:class::Class]::Bool
 end
 
 function Base.:(==)(obj1::NSObject, obj2::NSObject)
-  @objc [obj1::id{NSObject} isEqual:obj2::id{NSObject}]::Bool
+    @objc [obj1::id{NSObject} isEqual:obj2::id{NSObject}]::Bool
 end
 
 
@@ -77,7 +77,7 @@ export NSValue
 @objcwrapper NSValue <: NSObject
 
 Base.:(==)(v1::NSValue, v2::NSValue) =
-  @objc [v1::id{NSValue} isEqualToValue:v2::id{NSValue}]::Bool
+    @objc [v1::id{NSValue} isEqualToValue:v2::id{NSValue}]::Bool
 
 @objcproperties NSValue begin
     @autoproperty objCType::Ptr{Cchar}
@@ -88,7 +88,7 @@ end
 
 NSValue(x::Ptr) = NSValue(@objc [NSValue valueWithPointer:x::Ptr{Cvoid}]::id{NSValue})
 NSValue(x::Union{NSRange,UnitRange}) =
-  NSValue(@objc [NSValue valueWithRange:x::NSRange]::id{NSValue})
+    NSValue(@objc [NSValue valueWithRange:x::NSRange]::id{NSValue})
 # ...
 
 
@@ -134,11 +134,11 @@ end
 Base.isnan(dec::NSDecimal) = dec.length == 0 && dec.isNegative
 
 function Base.show(io::IO, dec::NSDecimal)
-  if isnan(dec)
-    print(io, "NaN")
-  else
-    print(io, "NSDecimal(", dec.mantissa, "e", dec.exponent, ")")
-  end
+    if isnan(dec)
+        print(io, "NaN")
+    else
+        print(io, "NSDecimal(", dec.mantissa, "e", dec.exponent, ")")
+    end
 end
 
 
@@ -183,13 +183,13 @@ const NSNumberTypes = [
 ]
 
 let
-  unique_number_types = Set{Type}(map(first, NSNumberTypes))
-  for T in unique_number_types
-    i = findfirst(x->x[1] == T, NSNumberTypes)
-    method = NSNumberTypes[i][2]
-    @eval NSNumber(x::$T) = NSNumber(@objc [NSNumber $method:x::$T]::id{NSNumber})
-    @eval Base.convert(::Type{NSNumber}, x::$T) = NSNumber(x)
-  end
+    unique_number_types = Set{Type}(map(first, NSNumberTypes))
+    for T in unique_number_types
+        i = findfirst(x->x[1] == T, NSNumberTypes)
+        method = NSNumberTypes[i][2]
+        @eval NSNumber(x::$T) = NSNumber(@objc [NSNumber $method:x::$T]::id{NSNumber})
+        @eval Base.convert(::Type{NSNumber}, x::$T) = NSNumber(x)
+    end
 end
 
 
@@ -265,13 +265,13 @@ Base.cconvert(::Type{id{NSString}}, str::String) = NSString(str)
 Base.convert(::Type{NSString}, str::String) = NSString(str)
 
 Base.:(==)(s1::Union{String,NSString}, s2::Union{String,NSString}) =
-  String(s1) == String(s2)
+    String(s1) == String(s2)
 Base.:(==)(s1::NSString, s2::NSString) =
-  @objc [s1::id{NSString} isEqualToString:s2::id{NSString}]::Bool
+    @objc [s1::id{NSString} isEqualToString:s2::id{NSString}]::Bool
 
 NSString() = NSString(@objc [NSString string]::id{NSString})
 NSString(data::String) =
-  NSString(@objc [NSString stringWithUTF8String:data::Ptr{Cchar}]::id{NSString})
+    NSString(@objc [NSString stringWithUTF8String:data::Ptr{Cchar}]::id{NSString})
 Base.length(s::NSString) = Int(s.length)
 Base.String(s::NSString) = unsafe_string(@objc [s::id{NSString} UTF8String]::Ptr{Cchar})
 
@@ -280,13 +280,13 @@ Base.string(s::NSString) = String(s)
 Base.print(io::IO, s::NSString) = print(io, String(s))
 
 Base.show(io::IO, ::MIME"text/plain", s::NSString) =
-  print(io, "NSString(", repr(String(s)), ")")
+    print(io, "NSString(", repr(String(s)), ")")
 Base.show(io::IO, s::NSString) = show(io, String(s))
 
 Base.contains(s::NSString, t::AbstractString) =
-  @objc [s::id{NSString} containsString:t::id{NSString}]::Bool
+    @objc [s::id{NSString} containsString:t::id{NSString}]::Bool
 Base.contains(s::AbstractString, t::NSString) =
-  @objc [s::id{NSString} containsString:t::id{NSString}]::Bool
+    @objc [s::id{NSString} containsString:t::id{NSString}]::Bool
 
 
 export NSArray
@@ -307,18 +307,18 @@ end
 
 Base.length(arr::NSArray) = Int(arr.count)
 function Base.getindex(arr::NSArray, i::Int)
-  @boundscheck 1 <= i <= length(arr) || throw(BoundsError(arr, i))
-  @objc [arr::id{NSArray} objectAtIndex:(i-1)::NSUInteger]::id{Object}
+    @boundscheck 1 <= i <= length(arr) || throw(BoundsError(arr, i))
+    @objc [arr::id{NSArray} objectAtIndex:(i-1)::NSUInteger]::id{Object}
 end
 
 Base.iterate(arr::NSArray, i::Int=1) = i > length(arr) ? nothing : (arr[i], i+1)
 
 Base.:(==)(a1::NSArray, a2::NSArray) =
-  @objc [a1::id{NSArray} isEqualToArray:a2::id{NSArray}]::Bool
+    @objc [a1::id{NSArray} isEqualToArray:a2::id{NSArray}]::Bool
 
 # conversion to typed Julia array
 function Base.convert(::Type{Vector{T}}, arr::NSArray) where {T}
-  [reinterpret(T, arr[i]) for i in 1:length(arr)]
+    [reinterpret(T, arr[i]) for i in 1:length(arr)]
 end
 Vector{T}(arr::NSArray) where {T} = convert(Vector{T}, arr)
 
@@ -350,15 +350,15 @@ Base.keys(dict::NSDictionary) = dict.allKeys
 Base.values(dict::NSDictionary) = dict.allValues
 
 function Base.getindex(dict::NSDictionary, key::NSObject)
-  ptr = @objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::id{Object}
-  ptr == nil && throw(KeyError(key))
-  return ptr
+    ptr = @objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::id{Object}
+    ptr == nil && throw(KeyError(key))
+    return ptr
 end
 
 # conversion to typed Julia dictionary
 function Base.convert(::Type{Dict{K,V}}, dict::NSDictionary) where {K,V}
-  Dict{K,V}(zip(map(Base.Fix1(reinterpret, K), keys(dict)),
-                map(Base.Fix1(reinterpret, V), values(dict))))
+    Dict{K,V}(zip(map(Base.Fix1(reinterpret, K), keys(dict)),
+                    map(Base.Fix1(reinterpret, V), values(dict))))
 end
 Dict{K,V}(dict::NSDictionary) where {K,V} = convert(Dict{K,V}, dict)
 
@@ -379,33 +379,33 @@ end
 # TODO: userInfo
 
 function NSError(domain, code)
-  err = @objc [NSError errorWithDomain:domain::id{NSString}
-                       code:code::NSInteger
-                       userInfo:nil::id{NSDictionary}]::id{NSError}
-  return NSError(err)
+    err = @objc [NSError errorWithDomain:domain::id{NSString}
+                        code:code::NSInteger
+                        userInfo:nil::id{NSDictionary}]::id{NSError}
+    return NSError(err)
 end
 
 function NSError(domain, code, userInfo)
-  err = @objc [NSError errorWithDomain:domain::id{NSString}
-                       code:code::NSInteger
-                       userInfo:userInfo::id{NSDictionary}]::id{NSError}
-  return NSError(err)
+    err = @objc [NSError errorWithDomain:domain::id{NSString}
+                        code:code::NSInteger
+                        userInfo:userInfo::id{NSDictionary}]::id{NSError}
+    return NSError(err)
 end
 
 function Base.showerror(io::IO, err::NSError)
-  print(io, "NSError: $(err.localizedDescription) ($(err.domain), code $(err.code))")
+    print(io, "NSError: $(err.localizedDescription) ($(err.domain), code $(err.code))")
 
-  if err.localizedFailureReason !== nothing
-    print(io, "\nFailure reason: $(err.localizedFailureReason)")
-  end
-
-  recovery_options = err.localizedRecoveryOptions
-  if recovery_options !== nothing
-    print(io, "\nRecovery Options:")
-    for option in recovery_options
-      print(io, "\n - $(option)")
+    if err.localizedFailureReason !== nothing
+        print(io, "\nFailure reason: $(err.localizedFailureReason)")
     end
-  end
+
+    recovery_options = err.localizedRecoveryOptions
+    if recovery_options !== nothing
+        print(io, "\nRecovery Options:")
+        for option in recovery_options
+            print(io, "\n - $(option)")
+        end
+    end
 end
 
 
@@ -429,14 +429,14 @@ export NSBundle, load_framework
 @objcwrapper NSBundle <: NSObject
 
 function NSBundle(path::Union{String,NSString})
-  ptr = @objc [NSBundle bundleWithPath:path::id{NSString}]::id{NSBundle}
-  ptr == nil && error("Couldn't find bundle '$path'")
-  NSBundle(ptr)
+    ptr = @objc [NSBundle bundleWithPath:path::id{NSString}]::id{NSBundle}
+    ptr == nil && error("Couldn't find bundle '$path'")
+    NSBundle(ptr)
 end
 
 function load(bundle::NSBundle)
-  loaded = @objc [bundle::id{NSBundle} load]::Bool
-  loaded || error("Couldn't load bundle")
+    loaded = @objc [bundle::id{NSBundle} load]::Bool
+    loaded || error("Couldn't load bundle")
 end
 
 load_framework(name) = load(NSBundle("/System/Library/Frameworks/$name.framework"))
@@ -447,47 +447,47 @@ export NSURL, NSFileURL
 @objcwrapper NSURL <: NSObject
 
 @objcproperties NSURL begin
-  # Querying an NSURL
-  @autoproperty isFileURL::Bool
-  @autoproperty isFileReferenceURL::Bool
+    # Querying an NSURL
+    @autoproperty isFileURL::Bool
+    @autoproperty isFileReferenceURL::Bool
 
-  # Accessing the Parts of the URL
-  @autoproperty absoluteString::id{NSString}
-  @autoproperty absoluteURL::id{NSURL}
-  @autoproperty baseURL::id{NSURL}
-  @autoproperty fileSystemRepresentation::id{NSString}
-  @autoproperty fragment::id{NSString}
-  @autoproperty host::id{NSString}
-  @autoproperty lastPathComponent::id{NSString}
-  @autoproperty parameterString::id{NSString}
-  @autoproperty password::id{NSString}
-  @autoproperty path::id{NSString}
-  @autoproperty pathComponents::id{NSArray} type=Vector{NSString}
-  @autoproperty pathExtension::id{NSString}
-  @autoproperty port::id{NSNumber}
-  @autoproperty query::id{NSString}
-  @autoproperty relativePath::id{NSString}
-  @autoproperty relativeString::id{NSString}
-  @autoproperty resourceSpecifier::id{NSString}
-  @autoproperty scheme::id{NSString}
-  @autoproperty standardizedURL::id{NSURL}
-  @autoproperty user::id{NSString}
+    # Accessing the Parts of the URL
+    @autoproperty absoluteString::id{NSString}
+    @autoproperty absoluteURL::id{NSURL}
+    @autoproperty baseURL::id{NSURL}
+    @autoproperty fileSystemRepresentation::id{NSString}
+    @autoproperty fragment::id{NSString}
+    @autoproperty host::id{NSString}
+    @autoproperty lastPathComponent::id{NSString}
+    @autoproperty parameterString::id{NSString}
+    @autoproperty password::id{NSString}
+    @autoproperty path::id{NSString}
+    @autoproperty pathComponents::id{NSArray} type=Vector{NSString}
+    @autoproperty pathExtension::id{NSString}
+    @autoproperty port::id{NSNumber}
+    @autoproperty query::id{NSString}
+    @autoproperty relativePath::id{NSString}
+    @autoproperty relativeString::id{NSString}
+    @autoproperty resourceSpecifier::id{NSString}
+    @autoproperty scheme::id{NSString}
+    @autoproperty standardizedURL::id{NSURL}
+    @autoproperty user::id{NSString}
 
-  # Modifying and Converting a File URL
-  @autoproperty filePathURL::id{NSURL}
-  @autoproperty fileReferenceURL::id{NSURL}
+    # Modifying and Converting a File URL
+    @autoproperty filePathURL::id{NSURL}
+    @autoproperty fileReferenceURL::id{NSURL}
 end
 
 function NSURL(str::Union{String,NSString})
-  NSURL(@objc [NSURL URLWithString:str::id{NSString}]::id{NSURL})
+    NSURL(@objc [NSURL URLWithString:str::id{NSString}]::id{NSURL})
 end
 
 function NSFileURL(path::Union{String,NSString})
-  NSURL(@objc [NSURL fileURLWithPath:path::id{NSString}]::id{NSURL})
+    NSURL(@objc [NSURL fileURLWithPath:path::id{NSString}]::id{NSURL})
 end
 
 function Base.:(==)(a::NSURL, b::NSURL)
-  @objc [a::id{NSURL} isEqual:b::id{NSURL}]::Bool
+    @objc [a::id{NSURL} isEqual:b::id{NSURL}]::Bool
 end
 
 
@@ -531,12 +531,12 @@ For high-level usage, consider using the do-block syntax, or [`@autoreleasepool`
 instead.
 """
 function NSAutoreleasePool()
-  obj = NSAutoreleasePool(@objc [NSAutoreleasePool alloc]::id{NSAutoreleasePool})
-  # XXX: this init call itself requires an autoreleasepool to be active...
-  @objc [obj::id{NSAutoreleasePool} init]::id{NSAutoreleasePool}
-  # NOTE: we don't register a finalizer, as it's better to drain the pool,
-  #       and it's not allowed to both drain and release.
-  obj
+    obj = NSAutoreleasePool(@objc [NSAutoreleasePool alloc]::id{NSAutoreleasePool})
+    # XXX: this init call itself requires an autoreleasepool to be active...
+    @objc [obj::id{NSAutoreleasePool} init]::id{NSAutoreleasePool}
+    # NOTE: we don't register a finalizer, as it's better to drain the pool,
+    #       and it's not allowed to both drain and release.
+    obj
 end
 
 drain(pool::NSAutoreleasePool) = @objc [pool::id{NSAutoreleasePool} drain]::Cvoid
@@ -559,34 +559,34 @@ To disable these limitations, use the unsafe [`NSUnsafeAutoreleasePool`](@ref) i
 See also: [`@autoreleasepool`](@ref)
 """
 function NSAutoreleasePool(f::Base.Callable)
-  # we cannot switch between multiple autorelease pools, so ensure only one is ever active.
-  # XXX: support multiple pools, as long as they run on separate threads?
-  Base.@lock NSAutoreleaseLock begin
-    # autorelease pools are thread-bound, so ensure we don't migrate to another thread
-    task = current_task()
-    sticky = task.sticky
-    task.sticky = true
+    # we cannot switch between multiple autorelease pools, so ensure only one is ever active.
+    # XXX: support multiple pools, as long as they run on separate threads?
+    Base.@lock NSAutoreleaseLock begin
+        # autorelease pools are thread-bound, so ensure we don't migrate to another thread
+        task = current_task()
+        sticky = task.sticky
+        task.sticky = true
 
-    pool = NSAutoreleasePool()
-    try
-      f()
-    finally
-      drain(pool)
-      #task.sticky = sticky
-      # XXX: we cannot safely re-enable thread migration, as the called code might have
-      #      disabled it too. instead, Julia should have a notion of "temporary pinning"
+        pool = NSAutoreleasePool()
+        try
+            f()
+        finally
+            drain(pool)
+            #task.sticky = sticky
+            # XXX: we cannot safely re-enable thread migration, as the called code might have
+            #      disabled it too. instead, Julia should have a notion of "temporary pinning"
+        end
     end
-  end
 end
 const NSAutoreleaseLock = ReentrantLock()
 
 function NSUnsafeAutoreleasePool(f::Base.Callable)
-  pool = NSAutoreleasePool()
-  try
-    f()
-  finally
-    drain(pool)
-  end
+    pool = NSAutoreleasePool()
+    try
+        f()
+    finally
+        drain(pool)
+    end
 end
 
 
@@ -602,57 +602,57 @@ enclosed code block has finished.
 See also: [`NSAutoreleasePool`](@ref)
 """
 macro autoreleasepool(ex...)
-  code = ex[end]
-  kwargs = ex[1:end-1]
+    code = ex[end]
+    kwargs = ex[1:end-1]
 
-  # extract keyword arguments that are handled by this macro
-  unsafe = false
-  for kwarg in kwargs
-    if Meta.isexpr(kwarg, :(=))
-      key, value = kwarg.args
-      if key == :unsafe
-          isa(value, Bool) || throw(ArgumentError("Invalid value for keyword argument `unsafe`: got `$value`, expected literal boolean value"))
-          unsafe = value
-      else
-          error("Invalid keyword argument to @autoreleasepool: $kwarg")
-      end
+    # extract keyword arguments that are handled by this macro
+    unsafe = false
+    for kwarg in kwargs
+        if Meta.isexpr(kwarg, :(=))
+            key, value = kwarg.args
+            if key == :unsafe
+                isa(value, Bool) || throw(ArgumentError("Invalid value for keyword argument `unsafe`: got `$value`, expected literal boolean value"))
+                unsafe = value
+            else
+                error("Invalid keyword argument to @autoreleasepool: $kwarg")
+            end
+        else
+            throw(ArgumentError("Invalid keyword argument to @autoreleasepool: $kwarg"))
+        end
+    end
+    f = unsafe ? NSUnsafeAutoreleasePool : NSAutoreleasePool
+
+    if Meta.isexpr(code, :(=)) &&
+        (Meta.isexpr(code.args[1], :call) || Meta.isexpr(code.args[1], :where))
+        # function definition, short form
+        sig, body = code.args
+        @assert Meta.isexpr(body, :block)
+        managed_body = quote
+            $f() do
+                $body
+            end
+        end
+        esc(Expr(:(=), sig, managed_body))
+    elseif Meta.isexpr(code, :function)
+        # function definition, long form
+        sig = code.args[1]
+        @assert Meta.isexpr(sig, :call) || Meta.isexpr(sig, :where)
+        body = code.args[2]
+        @assert Meta.isexpr(body, :block)
+        managed_body = quote
+            $f() do
+                $body
+            end
+        end
+        esc(Expr(:function, sig, managed_body))
     else
-      throw(ArgumentError("Invalid keyword argument to @autoreleasepool: $kwarg"))
+        # code block
+        quote
+            $f() do
+                $(esc(code))
+            end
+        end
     end
-  end
-  f = unsafe ? NSUnsafeAutoreleasePool : NSAutoreleasePool
-
-  if Meta.isexpr(code, :(=)) &&
-     (Meta.isexpr(code.args[1], :call) || Meta.isexpr(code.args[1], :where))
-    # function definition, short form
-    sig, body = code.args
-    @assert Meta.isexpr(body, :block)
-    managed_body = quote
-      $f() do
-        $body
-      end
-    end
-    esc(Expr(:(=), sig, managed_body))
-  elseif Meta.isexpr(code, :function)
-    # function definition, long form
-    sig = code.args[1]
-    @assert Meta.isexpr(sig, :call) || Meta.isexpr(sig, :where)
-    body = code.args[2]
-    @assert Meta.isexpr(body, :block)
-    managed_body = quote
-      $f() do
-        $body
-      end
-    end
-    esc(Expr(:function, sig, managed_body))
-  else
-    # code block
-    quote
-      $f() do
-        $(esc(code))
-      end
-    end
-  end
 end
 
 

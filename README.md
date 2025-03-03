@@ -68,9 +68,9 @@ it is possible to access these directly using `@objc`, ObjectiveC.jl provides a 
 automatically generate the appropriate `getproperty`, `setproperty!` and `propertynames`
 definitions:
 
-```julia
+```julia-repl
 julia> @objcproperties NSValue begin
-         @autoproperty pointerValue::Ptr{Cvoid}
+           @autoproperty pointerValue::Ptr{Cvoid}
        end
 
 julia> obj.pointerValue
@@ -82,30 +82,30 @@ property macros:
 
 ```julia
 @objcproperties SomeObject begin
-  # simplest definition: just generate a getter,
-  # and convert the property value to `DstTyp`
-  @autoproperty someProperty::DstTyp
+    # simplest definition: just generate a getter,
+    # and convert the property value to `DstTyp`
+    @autoproperty someProperty::DstTyp
 
-  # also generate a setter
-  @autoproperty someProperty::DstTyp setter=setSomeProperty
+    # also generate a setter
+    @autoproperty someProperty::DstTyp setter=setSomeProperty
 
-  # if the property is an ObjC object, use an object pointer type.
-  # this will make sure to do a nil check and return nothing,
-  # or convert the pointer to an instance of the specified type
-  @autoproperty someProperty::id{DstTyp}
+    # if the property is an ObjC object, use an object pointer type.
+    # this will make sure to do a nil check and return nothing,
+    # or convert the pointer to an instance of the specified type
+    @autoproperty someProperty::id{DstTyp}
 
-  # sometimes you may want to convert to a different type
-  @autoproperty someStringProperty::id{NSString} type=String
+    # sometimes you may want to convert to a different type
+    @autoproperty someStringProperty::id{NSString} type=String
 
-  # and finally, if more control is needed, just do it yourselv:
-  @getproperty someComplexProperty function(obj)
-    # do something with obj
-    # return a value
-  end
-  @setproperty! someComplexProperty function(obj, val)
-    # do something with obj and val
-    # return nothing
-  end
+    # and finally, if more control is needed, just do it yourself:
+    @getproperty someComplexProperty function(obj)
+        # do something with obj
+        # return a value
+    end
+    @setproperty! someComplexProperty function(obj, val)
+        # do something with obj and val
+        # return nothing
+    end
 end
 ```
 
@@ -114,10 +114,10 @@ end
 
 Julia callables can be converted to Objective-C blocks using the `@objcblock` macro:
 
-```julia
+```julia-repl
 julia> function hello(x)
-         println("Hello, $x!")
-         x+1
+          println("Hello, $x!")
+          x+1
        end
 julia> block = @objcblock(hello, Cint, (Cint,))
 ```
@@ -134,11 +134,11 @@ may decide to coalesce multiple conditions into a single execution, so it is pre
 use `@objcblock` whenever possible. It is also not possible to pass any arguments to the
 condition, but you can use a closure to capture any state you need:
 
-```julia
+```julia-repl
 julia> counter = 0
 julia> cond = Base.AsyncCondition() do async_cond
-          counter += 1
-        end
+           counter += 1
+       end
 julia> block = @objcasyncblock(cond)
 ```
 
@@ -147,7 +147,7 @@ julia> block = @objcasyncblock(cond)
 
 ObjectiveC.jl also provides ready-made wrappers for essential frameworks like Foundation:
 
-```julia
+```julia-repl
 julia> using .Foundation
 
 
@@ -156,9 +156,9 @@ NSString("test")
 
 
 julia> NSArray([str, str])
-(
-    test,
-    test
+<__NSArrayI 0x12e69b9b0>(
+test,
+test
 )
 
 
@@ -181,7 +181,7 @@ Dict{NSString, NSString} with 1 entry:
 To see what ObjectiveC.jl is doing under the hood, you can toggle the `tracing` preference,
 which will make the package print out the Objective-C calls it makes:
 
-```julia
+```julia-repl
 julia> using ObjectiveC
 julia> ObjectiveC.enable_tracing(true)
 [ Info: ObjectiveC.jl tracing setting changed; restart your Julia session for this change to take effect!
