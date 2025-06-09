@@ -59,7 +59,7 @@ function UnavailableError(f, symbol::Symbol, platform::String, avail::PlatformAv
     elseif !isnothing(avail.introduced) && f() < avail.introduced
         "was introduced on $platform v$(avail.introduced)"
     else
-        "does not seem to be unavailable. Please file an issue at www.github.com/JuliaInterop/ObjectiveC.jl with the source of the offending Objective-C code."
+        "does not seem to be available. Please file an issue at www.github.com/JuliaInterop/ObjectiveC.jl with the source of the offending Objective-C code."
     end
     return UnavailableError(symbol, msg)
 end
