@@ -23,7 +23,7 @@ end
     const darwin_version = OncePerProcess{VersionNumber}() do
         _syscall_version("kern.osrelease")
     end
-    const macos_version = OncePerProcess{VersionNumber}() do
+    const _macos_version = OncePerProcess{VersionNumber}() do
         _syscall_version("kern.osproductversion")
     end
 else
@@ -35,12 +35,22 @@ else
         _darwin_version[]
     end
 
-    const _macos_version = Ref{VersionNumber}()
-    function macos_version()
-        if !isassigned(_macos_version)
-            _macos_version[] = _syscall_version("kern.osproductversion")
+    const __macos_version = Ref{VersionNumber}()
+    function _macos_version()
+        if !isassigned(__macos_version)
+            __macos_version[] = _syscall_version("kern.osproductversion")
         end
-        _macos_version[]
+        __macos_version[]
+    end
+end
+
+# If normalize = true and version is reported as 16, return 26
+function macos_version(normalize=true)
+    ver = _macos_version()
+    if !normalize || (ver.major != 16)
+        return ver
+    else
+        return VersionNumber(26, ver.minor, ver.patch)
     end
 end
 
