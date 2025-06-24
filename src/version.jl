@@ -44,15 +44,14 @@ else
     end
 end
 
-# If normalize = true and version is reported as 16, return 26
 function macos_version(normalize=true)
     ver = _macos_version()
-    if !normalize || (ver.major != 16)
-        return ver
-    else
+    if normalize && ver.major == 16
+        # on older SDKs, macOS Tahoe (26) is reported as v16.
+        # normalize this to v26 regardless of the SDK to simplify use.
         return VersionNumber(26, ver.minor, ver.patch)
-    end
-end
+    end    
+    return ver
 
 @doc """
     ObjectiveC.darwin_version()::VersionNumber
