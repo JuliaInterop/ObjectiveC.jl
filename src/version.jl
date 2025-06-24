@@ -52,7 +52,7 @@ function macos_version(normalize=true)
         return VersionNumber(26, ver.minor, ver.patch)
     end    
     return ver
-
+end
 @doc """
     ObjectiveC.darwin_version()::VersionNumber
 
