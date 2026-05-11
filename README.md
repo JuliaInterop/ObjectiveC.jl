@@ -119,13 +119,21 @@ throw(MethodError(f, ...))` to the method body:
     @objc [obj::id{NSObject} release]::Cvoid
 ```
 
+Only one `open=true` definition is supported per function name. Because each `open=true`
+method rewrites its `KindOf{T}` slot to `::Object`, a second one on the same function would
+collide at `f(::Object, …)` and silently clobber the first. This is intentional: the
+canonical pattern is a single open-world root (every NSObject primitive has exactly one),
+and class-specific specialization should be a plain (closed-world) method on the concrete
+subclass, whose signature is strictly more specific than `::Object` so Julia's dispatch will
+prefer it.
+
 Rule of thumb: **closed-world when the dispatch set is owned by one module; open-world
 when the method should outlive any one package's view of the hierarchy.**
 
 
 ## Properties
 
-A common pattern in Objective-C is to use properties to acces instance variables. Although
+A common pattern in Objective-C is to use properties to access instance variables. Although
 it is possible to access these directly using `@objc`, ObjectiveC.jl provides a macro to
 automatically generate the appropriate `getproperty`, `setproperty!` and `propertynames`
 definitions:

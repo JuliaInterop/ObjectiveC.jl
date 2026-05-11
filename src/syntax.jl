@@ -81,11 +81,11 @@ end
 # to warn when a subclass is declared after methods on its ancestor —
 # such methods will not dispatch on `Sub`, because their Union was frozen
 # at the time `@objcdispatch` was processed.
-const objcdispatch_sites = IdDict{Type, Vector{NamedTuple{(:name, :file, :line), Tuple{Symbol, String, Int}}}}()
+const objcdispatch_sites = IdDict{Type, Vector{NamedTuple{(:name, :file, :line), Tuple{String, String, Int}}}}()
 
-function register_objcdispatch_site!(P::Type, name::Symbol, file::AbstractString, line::Integer)
-    sites = get!(() -> NamedTuple{(:name, :file, :line), Tuple{Symbol, String, Int}}[], objcdispatch_sites, P)
-    entry = (name=name, file=String(file), line=Int(line))
+function register_objcdispatch_site!(P::Type, name::AbstractString, file::AbstractString, line::Integer)
+    sites = get!(() -> NamedTuple{(:name, :file, :line), Tuple{String, String, Int}}[], objcdispatch_sites, P)
+    entry = (name=String(name), file=String(file), line=Int(line))
     entry in sites || push!(sites, entry)
     return
 end
@@ -579,11 +579,13 @@ macro objcdispatch(ex...)
 
     ex = decl
     # Accept `@objcdispatch @inline function ... end` style by unwrapping
-    # leading macro decorators (e.g. `@inline`, `@noinline`).
-    decorators = Any[]
+    # leading macro decorators (e.g. `@inline`, `@noinline`,
+    # `@autoreleasepool unsafe=true`). Save each macrocall in full so the
+    # macro name, original LineNumberNode, and any intermediate kwargs are
+    # preserved when we re-wrap below.
+    decorators = Expr[]
     while Meta.isexpr(ex, :macrocall)
-        # Drop the LineNumberNode in macrocalls (args[2])
-        push!(decorators, ex.args[1])
+        push!(decorators, ex)
         ex = ex.args[end]
     end
 
@@ -725,7 +727,9 @@ macro objcdispatch(ex...)
 
     method_def = Expr(:function, new_sig, body)
     for dec in reverse(decorators)
-        method_def = Expr(:macrocall, dec, LineNumberNode(0), method_def)
+        # Re-emit the original macrocall with the new function body in the
+        # trailing slot, preserving every other arg (LineNumberNode, kwargs).
+        method_def = Expr(:macrocall, dec.args[1:end-1]..., method_def)
     end
 
     # Register this call site under every parent T so a later `@objcwrapper
@@ -735,9 +739,12 @@ macro objcdispatch(ex...)
     # there is no stale Union to warn about).
     src_file = String(__source__.file)
     src_line = Int(__source__.line)
-    fname_q = QuoteNode(fname isa Symbol ? fname : Symbol(fname))
+    # Store the function name as a String so qualified spellings
+    # (`Base.show`, `MyMod.foo`) round-trip into the late-subclass warning
+    # faithfully — `Symbol(Expr)` would mangle them via `string`.
+    fname_str = string(fname)
     register_calls = open ? Expr[] : [
-        :( $ObjectiveC.register_objcdispatch_site!($P, $fname_q, $src_file, $src_line) )
+        :( $ObjectiveC.register_objcdispatch_site!($P, $fname_str, $src_file, $src_line) )
         for P in unique(parent_types) if !isabstracttype(P)
     ]
 
