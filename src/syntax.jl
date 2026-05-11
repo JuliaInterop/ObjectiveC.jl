@@ -647,12 +647,17 @@ macro objcmethod(ex...)
     end)
 end
 
-# True iff `f` has a method whose signature is *exactly* `Tuple{typeof(f),
-# argtypes.parameters...}` — used by `@objcmethod` to decide whether the
-# entry forwarder is already in place. `hasmethod` would be too loose
-# (`hasmethod(==, Tuple{Object, Object})` is true via `==(::Any, ::Any)`).
+# True iff `f` has a method whose signature is *exactly*
+# `Tuple{Core.Typeof(f), argtypes.parameters...}` — used by `@objcmethod` to
+# decide whether the entry forwarder is already in place. `hasmethod` would be
+# too loose (`hasmethod(==, Tuple{Object, Object})` is true via `==(::Any,
+# ::Any)`).  `Core.Typeof` gives `Type{T}` when `f` is itself a type and
+# `typeof(f)` otherwise, matching how the method table keys constructors —
+# without it, two `@objcmethod` overloads of a constructor would both fail
+# this check and both emit the entry forwarder, which Julia 1.12 rejects as
+# method overwriting during precompilation.
 function has_exact_method(@nospecialize(f), @nospecialize(argtypes::Type))
-    sig = Tuple{typeof(f), Base.unwrap_unionall(argtypes).parameters...}
+    sig = Tuple{Core.Typeof(f), Base.unwrap_unionall(argtypes).parameters...}
     m = try
         which(f, argtypes)
     catch

@@ -390,6 +390,19 @@ end
 
     # The legacy `open=true` keyword should now error.
     @test_throws LoadError @eval @objcmethod open=true bad_open(x::KindOf{TestNSString}) = nothing
+
+    # Regression: two `@objcmethod` overloads of the same *constructor*
+    # (i.e. `f` is a type, not a generic function) must not both emit the
+    # `(::Object)` entry forwarder. The dedup guard keys methods by
+    # `Type{T}` rather than `typeof(T) == DataType`, otherwise both
+    # overloads emit the entry and Julia 1.12 rejects the redefinition
+    # during precompilation. `@objcwrapper` is `@eval`d so the macro
+    # check runs after the type exists.
+    @eval @objcwrapper TestCtorTarget <: Object
+    @eval @objcmethod TestCtorTarget(x::KindOf{TestNSString}) =
+        TestCtorTarget(reinterpret($id{TestCtorTarget}, $pointer(x)))
+    @test_nowarn @eval @objcmethod TestCtorTarget(x::KindOf{TestNSOperationQueue}) =
+        TestCtorTarget(reinterpret($id{TestCtorTarget}, $pointer(x)))
 end
 
 using .Foundation
