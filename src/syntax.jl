@@ -506,41 +506,19 @@ macro objcdispatch(ex...)
         ex = ex.args[end]
     end
 
-    Meta.isexpr(ex, :function) || Meta.isexpr(ex, :(=)) ||
-        wrappererror("@objcdispatch expects a function definition")
-
-    sig = ex.args[1]
-    body = ex.args[2]
-
-    # Peel off `f(...)::ret`
-    rettype = nothing
-    if Meta.isexpr(sig, :(::))
-        rettype = sig.args[2]
-        sig = sig.args[1]
+    # Parse the function definition. `splitdef` handles long-form (`function
+    # f(...) end`), short-form (`f(...) = ...`), where clauses, return-type
+    # annotations, kwargs, default values, varargs, etc. uniformly into a
+    # `Dict{Symbol,Any}` we can mutate and rebuild via `combinedef`.
+    def = try
+        splitdef(ex)
+    catch err
+        wrappererror("@objcdispatch expects a function definition ($err)")
     end
-
-    # Peel off `where {T...}`
-    whereparams = Any[]
-    while Meta.isexpr(sig, :where)
-        append!(whereparams, sig.args[2:end])
-        sig = sig.args[1]
-    end
-
-    Meta.isexpr(sig, :call) || wrappererror("@objcdispatch expects a function-call signature")
-
-    fname = sig.args[1]
-    rawargs = sig.args[2:end]
-
-    # Separate kwargs (Expr(:parameters, ...)) from positional args.
-    kwparams = nothing
-    args = Any[]
-    for a in rawargs
-        if Meta.isexpr(a, :parameters)
-            kwparams = a
-        else
-            push!(args, a)
-        end
-    end
+    args        = get(def, :args, Any[])::Vector
+    kwargs      = get(def, :kwargs, Any[])::Vector
+    whereparams = get(def, :whereparams, Any[])::Vector
+    fname       = def[:name]
     isempty(args) && wrappererror("@objcdispatch needs at least one positional argument typed `KindOf{T}`")
 
     # Recognize `KindOf{T}` and any qualified form ending in `KindOf{T}`
@@ -553,8 +531,8 @@ macro objcdispatch(ex...)
         return false
     end
 
-    # Locate every `KindOf{T}` argument and remember each type parameter T.
-    # The arg may be named (`x::T`, length 2) or anonymous (`::T`, length 1).
+    # Locate every `KindOf{T}` slot (allowed forms: `x::KindOf{T}`,
+    # `::KindOf{T}`). Remember the type parameter for each.
     kindof_slots = Tuple{Int, Any}[]
     for (i, a) in enumerate(args)
         Meta.isexpr(a, :(::)) || continue
@@ -565,8 +543,8 @@ macro objcdispatch(ex...)
     isempty(kindof_slots) &&
         wrappererror("@objcdispatch needs at least one argument typed `KindOf{T}`")
 
-    # Name every positional arg (gensym anonymous ones) so we can pass them
-    # through to the body method from the entry forwarder.
+    # Name every positional arg (gensym anonymous ones) so the entry
+    # forwarder can pass them through to the body method.
     arg_names = Symbol[]
     for a in args
         if Meta.isexpr(a, :(::))
@@ -579,7 +557,7 @@ macro objcdispatch(ex...)
     end
 
     # Sanity-check each KindOf{T}: T must resolve to a `<: Object` at
-    # macroexpand time. We don't otherwise use T at expansion time — the
+    # macroexpand time. We don't otherwise use T at expansion time; the
     # generated `Type{<:classkind(T)}` resolves it again at function-def
     # time in the user's module.
     for (_, T_expr) in kindof_slots
@@ -592,74 +570,54 @@ macro objcdispatch(ex...)
             wrappererror("@objcdispatch type parameter `$T_expr` must resolve to a subtype of `Object`, got $P")
     end
 
-    # Build the body method's signature: each `KindOf{T}` arg is `::Object`
-    # in-place (named with arg_names[idx]), and a `::Type{<:classkind(T)}`
-    # trait-dispatch arg is prepended (one per KindOf slot, in order).
-    body_args = Any[]
-    for (i, a) in enumerate(args)
+    # Helper: rewrite the user's positional args into the entry-side shape —
+    # each `KindOf{T}` slot becomes `::Object`, anonymous-typed args are
+    # named so the forwarder can reference them.
+    function entry_arg(i, a)
         if Meta.isexpr(a, :(::)) && is_kindof_type(a.args[end])
-            push!(body_args, :( $(arg_names[i])::$ObjectiveC.Object ))
+            :( $(arg_names[i])::$ObjectiveC.Object )
         elseif Meta.isexpr(a, :(::)) && length(a.args) == 1
-            # anonymous-typed positional arg: promote to a named one so
-            # the entry forwarder can pass it through.
-            push!(body_args, :( $(arg_names[i])::$(a.args[1]) ))
+            :( $(arg_names[i])::$(a.args[1]) )
         else
-            push!(body_args, a)
+            a
         end
     end
-    kind_args = Any[
-        :( ::Type{<:$ObjectiveC.classkind($T_expr)} )
-        for (_, T_expr) in kindof_slots
-    ]
-    body_sig = Expr(:call, fname, kind_args..., body_args...)
-    if kwparams !== nothing
-        insert!(body_sig.args, 2, kwparams)
-    end
-    for tp in whereparams
-        body_sig = Expr(:where, body_sig, tp)
-    end
-    if rettype !== nothing
-        body_sig = Expr(:(::), body_sig, rettype)
-    end
-    body_def = Expr(:function, body_sig, body)
+    rewritten_args = Any[entry_arg(i, a) for (i, a) in enumerate(args)]
+
+    # Body method: trait-dispatch args (`::Type{<:classkind(T)}`) prepended
+    # to the user's positional args (with KindOf slots rewritten to
+    # `::Object`). `combinedef` rebuilds the full def from the dict.
+    body_def = combinedef(merge(def, Dict(
+        :args => vcat(
+            Any[:( ::Type{<:$ObjectiveC.classkind($T_expr)} ) for (_, T_expr) in kindof_slots],
+            rewritten_args,
+        ),
+    )))
     for dec in reverse(decorators)
         body_def = Expr(:macrocall, dec.args[1:end-1]..., body_def)
     end
 
-    # Build the entry forwarder's signature: same positional args as the
-    # user's signature, but `KindOf{T}` slots become `::Object`. Anonymous
-    # positional args get the same gensym name so we can pass them through.
-    # The entry's body forwards to the trait-dispatched method, prepending
-    # `classkind(typeof(x))` for each KindOf arg.
-    entry_args = Any[]
-    for (i, a) in enumerate(args)
-        if Meta.isexpr(a, :(::)) && is_kindof_type(a.args[end])
-            push!(entry_args, :( $(arg_names[i])::$ObjectiveC.Object ))
-        elseif Meta.isexpr(a, :(::)) && length(a.args) == 1
-            push!(entry_args, :( $(arg_names[i])::$(a.args[1]) ))
-        else
-            push!(entry_args, a)
-        end
+    # Entry forwarder: same positional args as the user wrote (with KindOf
+    # slots rewritten), forwards to the body method with
+    # `classkind(typeof(x))` prepended for each KindOf arg. Strip the rtype
+    # — the body carries it if any. Kwargs are forwarded by splat.
+    kwsym = isempty(kwargs) ? nothing : gensym(:kw)
+    fwd_args = vcat(
+        Any[:( $ObjectiveC.classkind(typeof($(arg_names[idx]))) ) for (idx, _) in kindof_slots],
+        Any[arg_names...],
+    )
+    fwd_call = if kwsym === nothing
+        Expr(:call, fname, fwd_args...)
+    else
+        Expr(:call, fname, Expr(:parameters, Expr(:..., kwsym)), fwd_args...)
     end
-    classkind_calls = Any[
-        :( $ObjectiveC.classkind(typeof($(arg_names[idx]))) )
-        for (idx, _) in kindof_slots
-    ]
-    fwd_call = Expr(:call, fname, classkind_calls..., arg_names...)
-    entry_sig = Expr(:call, fname, entry_args...)
-    if kwparams !== nothing
-        # Collect kwargs as `; kwargs__...` on the entry, splat them through
-        # to the body method on the forwarded call.
-        kwsym = gensym(:kw)
-        insert!(entry_sig.args, 2, Expr(:parameters, Expr(:..., kwsym)))
-        insert!(fwd_call.args, 2, Expr(:parameters, Expr(:..., kwsym)))
-    end
-    for tp in whereparams
-        entry_sig = Expr(:where, entry_sig, tp)
-    end
-    # No rettype on the entry — it just forwards; the body method carries
-    # the annotation if any.
-    entry_def = Expr(:(=), entry_sig, fwd_call)
+    entry_def = combinedef(Dict(
+        :name => fname,
+        :args => rewritten_args,
+        :kwargs => kwsym === nothing ? Any[] : Any[Expr(:..., kwsym)],
+        :whereparams => whereparams,
+        :body => fwd_call,
+    ))
 
     # Two `@objcdispatch` sites for the same function with disjoint
     # `KindOf{T}` roots but otherwise identical args produce the same entry
@@ -670,11 +628,11 @@ macro objcdispatch(ex...)
     # matches ours exactly. A `hasmethod` check would be too loose — for
     # `Base.:(==)` it would return true via `==(::Any, ::Any)` and we'd
     # never emit our entry. The body method's signature always differs
-    # across sites — it carries the trait-dispatch `Type{<:…Kind}` args —
-    # so it never needs guarding.
+    # across sites (it carries the trait-dispatch `Type{<:…Kind}` args), so
+    # it never needs guarding.
     entry_arg_types = Any[
         Meta.isexpr(a, :(::)) ? a.args[end] : :Any
-        for a in entry_args
+        for a in rewritten_args
     ]
     entry_sig_tuple = Expr(:curly, :Tuple, entry_arg_types...)
     for tp in whereparams

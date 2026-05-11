@@ -2,6 +2,8 @@ module ObjectiveC
 
 using CEnum
 
+using ExprTools: splitdef, combinedef
+
 using Preferences
 
 """
