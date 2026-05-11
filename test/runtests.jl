@@ -155,6 +155,9 @@ end
 @objcproperties TestNSOperationQueue begin
     @autoproperty name::id{TestNSString} setter=setName
 end
+# bare subclass: no `@objcproperties` of its own, used to verify that
+# `propertynames` inherits the parent's property list.
+@objcwrapper TestNSStringBareSub <: TestNSString
 @testset "@objcproperties" begin
     # immutable object with only read properties
     str1 = "foo"
@@ -189,6 +192,13 @@ end
     @test unsafe_string(queue.name.UTF8String) != str1
     queue.name = immut
     @test unsafe_string(queue.name.UTF8String) == str1
+
+    # subclass without its own @objcproperties block still surfaces the
+    # parent's properties via propertynames.
+    bare = TestNSStringBareSub(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestNSStringBareSub})
+    @test :length in propertynames(bare)
+    @test :UTF8String in propertynames(bare)
+    @test bare.length == length(str1)
 end
 
 @testset "@objc blocks" begin

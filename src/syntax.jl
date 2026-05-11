@@ -474,11 +474,14 @@ macro objcwrapper(ex...)
         # `objc_getproperty`/`objc_setproperty!` per class to install
         # autoproperty branches; without that, the chain walks straight to the
         # parent via `objc_parent`, all the way up to `Object` where it falls
-        # back to `getfield`/`setfield!`.
+        # back to `getfield`/`setfield!`. `propertynames` follows the same
+        # chain via `objc_propertynames` so children without their own
+        # `@objcproperties` block still surface their ancestors' properties.
         Base.getproperty(object::$name, field::Symbol) =
             $ObjectiveC.objc_getproperty($name, object, field)
         Base.setproperty!(object::$name, field::Symbol, value::Any) =
             $ObjectiveC.objc_setproperty!($name, object, field, value)
+        Base.propertynames(::$name) = $ObjectiveC.objc_propertynames($name)
 
         # Warn if any ancestor already has `@objcdispatch` methods — their
         # frozen Unions won't dispatch on us.
@@ -668,8 +671,13 @@ end
 
 # Property Accesors
 
-objc_propertynames(::Type{<:Object}) = Symbol[]
-objc_propertynames(::Nothing) = Symbol[]
+# Default `objc_propertynames` walks the ObjC parent chain. `@objcproperties`
+# emits a more specific method per class that merges the class's own list
+# with the parent's; without that method, this fallback ensures a child
+# wrapper still surfaces its ancestor's properties.
+@inline objc_propertynames(::Type{T}) where {T<:Object} =
+    objc_propertynames(objc_parent(T))
+@inline objc_propertynames(::Nothing) = Symbol[]
 
 # Generic property accessors used by `@objcproperties`-generated dispatch.
 # When a class has no override, walk the Objective-C parent chain. The chain
@@ -859,7 +867,8 @@ macro objcproperties(typ, ex)
         isempty(args) || propertyerror("too many positional arguments")
     end
 
-    # generate Base.propertynames definition
+    # Generate the per-class `objc_propertynames`. `Base.propertynames` is
+    # already emitted by `@objcwrapper` and routes through this method.
     propertynames_ex = quote
         function $ObjectiveC.objc_propertynames(::Type{$(esc(typ))})
             properties = [$(map(QuoteNode, collect(propertynames))...)]
@@ -868,9 +877,6 @@ macro objcproperties(typ, ex)
                 properties = union(properties, $ObjectiveC.objc_propertynames(parent))
             end
             return properties
-        end
-        function Base.propertynames(::$(esc(typ)))
-            $ObjectiveC.objc_propertynames($(esc(typ)))
         end
     end
 
