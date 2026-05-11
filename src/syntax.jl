@@ -959,20 +959,17 @@ macro objcproperties(typ, ex)
         end
     end
 
-    # generate `Base.getproperty` / `objc_getproperty` definitions.
-    # We define `objc_getproperty(::Type{T}, obj, field)` rather than
-    # `Base.getproperty` directly, so the ObjC parent chain can be walked at
-    # runtime via `objc_parent` (replacing the old `invoke(getproperty,
-    # supertype(T), ...)` chain). The wrapper `Base.getproperty(obj::T, field) =
-    # objc_getproperty(T, obj, field)` is the user-facing entry. The
-    # per-class method is `@inline`d so a literal `obj.length` propagates the
-    # field symbol through both forwarders, letting Julia fold the
-    # `if field === :length` cascade and infer the precise return type
-    # (without it, the body's return type degrades to the Union of every
-    # property type in the ancestor chain).
+    # generate `Base.getproperty` / `objc_getproperty` definitions. We define
+    # `objc_getproperty(::Type{T}, obj, field)` rather than `Base.getproperty` directly, so
+    # the ObjC parent chain can be walked at runtime via `objc_parent`. The wrapper
+    # `Base.getproperty(obj::T, field) = objc_getproperty(T, obj, field)` is the user-facing
+    # entry. The per-class method is `@inline`d so a literal `obj.length` propagates the
+    # field symbol through both forwarders, letting Julia fold the `if field === :length`
+    # cascade and infer the precise return type (without it, the body's return type degrades
+    # to the Union of every property type in the ancestor chain).
     #
-    # `obj` is intentionally left untyped — the same method must also serve
-    # `KindOf{T}` wrappers, which are not `<:Object`.
+    # `obj` is intentionally left untyped, as the same method must also serve `KindOf{T}`
+    # wrappers, which are not `<:Object`.
     getproperties_ex = quote end
     if !isempty(read_properties)
         current = nothing

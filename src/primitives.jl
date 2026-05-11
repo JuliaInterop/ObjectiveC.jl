@@ -132,11 +132,9 @@ Base.:(==)(x::Ptr, y::id) = throw(ArgumentError("Cannot compare id with Ptr"))
 function Base.convert(::Type{id{T}}, x::id{U}) where {T,U}
     # nil is an exception (we want to be able to use `nil` in `@objc` directly)
     x == nil && return Base.bitcast(id{T}, nil)
-    # allow conversion to a Julia supertype, or up an Objective-C inheritance
-    # chain (encoded by `inherits_from`, which is forward-declared and defined
-    # in syntax.jl). When both U and T are concrete leaf classes, Julia's `<:`
-    # alone is insufficient — every `@objcwrapper` class is <:Object but not
-    # <:its-ObjC-parent.
+    # allow conversion to a Julia supertype, or up an Objective-C inheritance chain (encoded
+    # by `inherits_from`). When both U and T are concrete leaf classes, Julia's `<:` alone
+    # is insufficient, since every `@objcwrapper` class is <:Object but not <:its-ObjC-parent.
     if !(U <: T) && !(compatible_id_types(T, U)::Bool)
         throw(ArgumentError("Cannot convert id{$U} to id{$T}"))
     end

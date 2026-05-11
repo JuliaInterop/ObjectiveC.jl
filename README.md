@@ -86,8 +86,8 @@ through as the nearest ancestor you *did* wrap.
 **Method polymorphic over a class and its subclasses.** When you've reconstructed part of
 the ObjC class hierarchy on the Julia side, i.e. written `@objcwrapper Sub <: Parent`,
 and want a method declared on `Parent` to dispatch for `Sub` as well, use `@objcdispatch`
-with a `KindOf{T}` argument. `@objcdispatch` has two modes — closed-world (the default)
-and open-world — picked by the dispatch boundary the method has to honour.
+with a `KindOf{T}` argument. `@objcdispatch` has two modes: closed-world (the default)
+and open-world, picked by the dispatch boundary the method has to honour.
 
 *Closed-world* (`@objcdispatch f(...)`) is the right choice when the set of subclasses is
 **fully known to the macro at expansion time**, typically because every `@objcwrapper Sub
@@ -107,30 +107,17 @@ dispatched natively:
 end
 ```
 
-The Union is **frozen at macro expansion**: `@objcwrapper Sub <: Parent` must come before
-any closed-world `@objcdispatch` on `KindOf{Parent}` or its ancestors, or `Sub` won't flow
-through the existing method (the `@objcwrapper` fires a warning pointing at the affected
-call site).
-
 *Open-world* (`@objcdispatch open=true f(...)`) is the right choice when the method should
-remain available to wrappers declared by **other modules or packages** — `retain`,
-`release`, `==`, `is_kind_of` and other foundation primitives are the canonical examples.
-Instead of freezing a Union, the macro substitutes `KindOf{T}` with the abstract apex
-`Object` (so any wrapper matches dispatch) and prepends a runtime guard
-`inherits_from(typeof(arg), T) || throw(MethodError(f, ...))` to the method body:
+remain available to wrappers declared by **other modules or packages**, e.g., `retain`,
+`release`, `==`, and other foundation primitives are the canonical examples. In this case,
+the macro substitutes `KindOf{T}` with the abstract apex `Object` (so any wrapper matches
+dispatch) and prepends a runtime guard `inherits_from(typeof(arg), T) ||
+throw(MethodError(f, ...))` to the method body:
 
 ```julia
 @objcdispatch open=true release(obj::KindOf{NSObject}) =
     @objc [obj::id{NSObject} release]::Cvoid
 ```
-
-`release` now applies to every wrapper declared anywhere downstream — Metal's `MTLBuffer`,
-MPS kernels, user types — without any re-declaration, and a non-`NSObject` argument is
-rejected with a clear `MethodError`. The runtime guard is `@inline`d through
-`inherits_from`, so for the typical call site where the concrete arg type is statically
-known, the check folds at compile time and the open-world variant compiles to the same
-code as the closed-world one. Open-world methods do not register a stale-Union watcher,
-so subsequent `@objcwrapper`s never warn about them.
 
 Rule of thumb: **closed-world when the dispatch set is owned by one module; open-world
 when the method should outlive any one package's view of the hierarchy.**
