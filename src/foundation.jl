@@ -33,12 +33,12 @@ export NSObject, retain, release, autorelease, is_kind_of
     @autoproperty retainCount::NSUInteger
 end
 
-# Methods defined by ObjC on NSObject. `@objcdispatch` dispatches through
+# Methods defined by ObjC on NSObject. `@objcmethod` dispatches through
 # the Kind lattice, so downstream wrappers (Metal, MPS, user code) automatically
 # participate without re-declaration: `classkind(typeof(obj)) <: NSObjectKind`
 # routes through the trait-dispatched body, while a non-NSObject `Object`
 # subtype hits a clean `MethodError` on the body method.
-@objcdispatch function Base.show(io::IO, ::MIME"text/plain",
+@objcmethod function Base.show(io::IO, ::MIME"text/plain",
                                  obj::KindOf{NSObject})
     if get(io, :compact, false)
         print(io, String(obj.description))
@@ -47,22 +47,22 @@ end
     end
 end
 
-@objcdispatch release(obj::KindOf{NSObject}) =
+@objcmethod release(obj::KindOf{NSObject}) =
     @objc [obj::id{NSObject} release]::Cvoid
 
-@objcdispatch autorelease(obj::KindOf{NSObject}) =
+@objcmethod autorelease(obj::KindOf{NSObject}) =
     @objc [obj::id{NSObject} autorelease]::Cvoid
 
-@objcdispatch retain(obj::KindOf{NSObject}) =
+@objcmethod retain(obj::KindOf{NSObject}) =
     @objc [obj::id{NSObject} retain]::Cvoid
 
-@objcdispatch function is_kind_of(obj::KindOf{NSObject}, class::Class)
+@objcmethod function is_kind_of(obj::KindOf{NSObject}, class::Class)
     @objc [obj::id{NSObject} isKindOfClass:class::Class]::Bool
 end
 
 # Default equality for ObjC objects via `isEqual:`. Specific classes can
 # override this for a faster path (NSString, NSURL, etc. already do).
-@objcdispatch function Base.:(==)(obj1::KindOf{NSObject},
+@objcmethod function Base.:(==)(obj1::KindOf{NSObject},
                                   obj2::KindOf{NSObject})
     @objc [obj1::id{NSObject} isEqual:obj2::id{NSObject}]::Bool
 end

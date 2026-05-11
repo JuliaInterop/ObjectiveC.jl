@@ -288,18 +288,18 @@ end
     end
 end
 
-# `@objcdispatch` methods declared at top level: they should dispatch on
+# `@objcmethod` methods declared at top level: they should dispatch on
 # subclasses declared later, even from outside the current testset.
-@objcdispatch open_len_kind(s::KindOf{TestNSString})::Int =
+@objcmethod open_len_kind(s::KindOf{TestNSString})::Int =
     Int(@objc [s::id{TestNSString} length]::Culong)
-@objcdispatch open_pair(a::KindOf{TestNSString}, b::KindOf{TestNSOperationQueue}) =
+@objcmethod open_pair(a::KindOf{TestNSString}, b::KindOf{TestNSOperationQueue}) =
     (typeof(a), typeof(b))
 # Subclass declared *after* the methods above — Kind-lattice dispatch
 # means it just works, with no warning, no registry, and no Union to
 # refreeze.
 @objcwrapper TestLateSub <: TestNSString
 
-@testset "inheritance / @objcdispatch" begin
+@testset "inheritance / @objcmethod" begin
     # The existing @objcproperties fixture gives us a two-level hierarchy:
     #   TestNSMutableString <: TestNSString <: Object
     # plus a sibling TestNSOperationQueue <: Object.
@@ -335,25 +335,25 @@ end
     str = TestNSString(@objc [NSString stringWithUTF8String:"xyz"::Ptr{UInt8}]::id{TestNSString})
     queue = TestNSOperationQueue(@objc [NSOperationQueue new]::id{TestNSOperationQueue})
 
-    # @objcdispatch dispatches on the Kind lattice — parent and every
+    # @objcmethod dispatches on the Kind lattice — parent and every
     # subclass route to the same body.
     @test open_len_kind(mut) == 4    # subclass
     @test open_len_kind(str) == 3    # exact type
-    # …including subclasses declared *after* the @objcdispatch site.
+    # …including subclasses declared *after* the @objcmethod site.
     late = TestLateSub(@objc [NSString stringWithUTF8String:"xyz"::Ptr{UInt8}]::id{TestLateSub})
     @test open_len_kind(late) == 3
 
     # non-conforming class → MethodError on the body method.
     @test_throws MethodError open_len_kind(queue)
 
-    # qualified `KindOf{T}` is recognized by @objcdispatch
-    @objcdispatch testlen_qualified(s::ObjectiveC.KindOf{TestNSString})::Int =
+    # qualified `KindOf{T}` is recognized by @objcmethod
+    @objcmethod testlen_qualified(s::ObjectiveC.KindOf{TestNSString})::Int =
         Int(@objc [s::id{TestNSString} length]::Culong)
     @test testlen_qualified(mut) == 4
 
     # the body sees the concrete subclass — `typeof(x)` resolves through
     # the entry forwarder.
-    @objcdispatch concretetype(s::KindOf{TestNSString}) = typeof(s)
+    @objcmethod concretetype(s::KindOf{TestNSString}) = typeof(s)
     @test concretetype(mut) === TestNSMutableString
     @test concretetype(str) === TestNSString
 
@@ -363,7 +363,7 @@ end
 
     # multiple `KindOf{T}` slots: every slot is independently lowered into
     # trait dispatch.
-    @objcdispatch pair_same(a::KindOf{TestNSString}, b::KindOf{TestNSString}) =
+    @objcmethod pair_same(a::KindOf{TestNSString}, b::KindOf{TestNSString}) =
         (typeof(a), typeof(b))
     @test pair_same(mut, str) === (TestNSMutableString, TestNSString)
     @test pair_same(str, mut) === (TestNSString, TestNSMutableString)
@@ -377,19 +377,19 @@ end
     # other positional args may be anonymous-typed (`::SomeType`) — that's
     # a one-element `::` expression and must not be confused for a KindOf
     # slot when locating substitutions.
-    @objcdispatch with_anon(s::KindOf{TestNSString}, ::Type{T}) where {T<:Integer} =
+    @objcmethod with_anon(s::KindOf{TestNSString}, ::Type{T}) where {T<:Integer} =
         (typeof(s), T)
     @test with_anon(mut, Int32) === (TestNSMutableString, Int32)
 
     # `KindOf{Object}` matches any wrapper (every classkind <: ObjectKind),
     # and a subclass declared afterwards also routes through it.
-    @objcdispatch anyobj(x::KindOf{Object}) = typeof(x)
+    @objcmethod anyobj(x::KindOf{Object}) = typeof(x)
     @test anyobj(mut) === TestNSMutableString
     @test anyobj(queue) === TestNSOperationQueue
     @test_nowarn @eval @objcwrapper TestNSAnyObjSub <: Object
 
     # The legacy `open=true` keyword should now error.
-    @test_throws LoadError @eval @objcdispatch open=true bad_open(x::KindOf{TestNSString}) = nothing
+    @test_throws LoadError @eval @objcmethod open=true bad_open(x::KindOf{TestNSString}) = nothing
 end
 
 using .Foundation

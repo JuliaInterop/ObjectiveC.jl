@@ -1,4 +1,4 @@
-export @objc, @objcwrapper, @objcproperties, @objcblock, @objcdispatch
+export @objc, @objcwrapper, @objcproperties, @objcblock, @objcmethod
 export KindOf
 
 
@@ -8,7 +8,7 @@ export KindOf
 # Each `@objcwrapper Foo <: Bar` emits `abstract type FooKind <: BarKind end`
 # alongside the concrete `struct Foo <: Object`. The concrete types stay flat
 # (so `Vector{Foo}` is unboxed), while `classkind(::Type{Foo}) = FooKind`
-# lets `@objcdispatch` dispatch through the Kind lattice via Julia's native
+# lets `@objcmethod` dispatch through the Kind lattice via Julia's native
 # multiple dispatch. There's no registration, no late-subclass warning, and
 # no closed-vs-open distinction — Julia's type lattice does all the work.
 #
@@ -28,7 +28,7 @@ objc_parent(::Type{Object}) = nothing
 objc_parent(::Type{<:Object}) = nothing
 
 
-# `KindOf{T}` is a parse-time marker recognized by `@objcdispatch` in
+# `KindOf{T}` is a parse-time marker recognized by `@objcmethod` in
 # argument positions. The struct itself is never instantiated — the macro
 # rewrites each `KindOf{T}` slot into trait dispatch on `Type{<:classkind(T)}`.
 # Modeled on Objective-C's `__kindof T *` type qualifier.
@@ -314,7 +314,7 @@ ObjC layer without forcing a Julia abstract type for each non-leaf class.
 
 Methods can be written directly on the concrete struct (e.g.
 `length(s::NSString) = ...`); polymorphic methods over an inheritance chain
-should be expressed via [`@objcdispatch`](@ref).
+should be expressed via [`@objcmethod`](@ref).
 
 Keyword arguments:
 
@@ -397,7 +397,7 @@ macro objcwrapper(ex...)
     end
 
     # Emit the parallel abstract `${name}Kind <: classkind(super)` for trait
-    # dispatch via `@objcdispatch`. `classkind(super)` is resolved at the
+    # dispatch via `@objcmethod`. `classkind(super)` is resolved at the
     # declaration site, so the super's Kind type must already exist (same
     # ordering rule as the concrete struct's `<:Object`).
     kindname = Symbol(name, "Kind")
@@ -405,7 +405,7 @@ macro objcwrapper(ex...)
     ex = quote
         $(structdef.args...)
 
-        # parallel Kind type, used by `@objcdispatch` for subclass dispatch.
+        # parallel Kind type, used by `@objcmethod` for subclass dispatch.
         abstract type $kindname <: $ObjectiveC.classkind($super) end
         $ObjectiveC.classkind(::Type{$name}) = $kindname
 
@@ -459,7 +459,7 @@ Base.unsafe_convert(T::Type{<:id}, arr::idArray) =
 
 
 """
-    @objcdispatch f(arg::KindOf{T}, more...)::ret begin
+    @objcmethod f(arg::KindOf{T}, more...)::ret begin
         # body
     end
 
@@ -473,7 +473,7 @@ The macro lowers each `KindOf{T}` slot to trait dispatch on the parallel
   * a body method `f(::Type{<:classkind(T)}, x, more...) = …`, dispatched
     on the Kind of the actual argument's class;
   * an entry forwarder `f(x::Object, more...) = f(classkind(typeof(x)), x, more...)`,
-    which is identical across all `@objcdispatch` sites for the same `f`
+    which is identical across all `@objcmethod` sites for the same `f`
     (Julia will simply redefine it, harmlessly).
 
 Multiple `KindOf{T}` slots are each lowered the same way; the trait
@@ -488,14 +488,14 @@ registration, and no late-subclass warning needed.
 runtime type intact. When the argument's static type is known at the call
 site, the trait dispatch folds through both methods to a direct call.
 """
-macro objcdispatch(ex...)
+macro objcmethod(ex...)
     decl = ex[end]
     isempty(ex[1:end-1]) ||
-        wrappererror("@objcdispatch no longer accepts keyword arguments; \
-                      drop `open=true` (every `@objcdispatch` is now open by construction)")
+        wrappererror("@objcmethod no longer accepts keyword arguments; \
+                      drop `open=true` (every `@objcmethod` is now open by construction)")
 
     ex = decl
-    # Accept `@objcdispatch @inline function ... end` style by unwrapping
+    # Accept `@objcmethod @inline function ... end` style by unwrapping
     # leading macro decorators (e.g. `@inline`, `@noinline`,
     # `@autoreleasepool unsafe=true`). Save each macrocall in full so the
     # macro name, original LineNumberNode, and any intermediate kwargs are
@@ -513,13 +513,13 @@ macro objcdispatch(ex...)
     def = try
         splitdef(ex)
     catch err
-        wrappererror("@objcdispatch expects a function definition ($err)")
+        wrappererror("@objcmethod expects a function definition ($err)")
     end
     args        = get(def, :args, Any[])::Vector
     kwargs      = get(def, :kwargs, Any[])::Vector
     whereparams = get(def, :whereparams, Any[])::Vector
     fname       = def[:name]
-    isempty(args) && wrappererror("@objcdispatch needs at least one positional argument typed `KindOf{T}`")
+    isempty(args) && wrappererror("@objcmethod needs at least one positional argument typed `KindOf{T}`")
 
     # Recognize `KindOf{T}` and any qualified form ending in `KindOf{T}`
     # (e.g. `ObjectiveC.KindOf{T}`, `OC.KindOf{T}`).
@@ -541,7 +541,7 @@ macro objcdispatch(ex...)
         push!(kindof_slots, (i, typ.args[2]))
     end
     isempty(kindof_slots) &&
-        wrappererror("@objcdispatch needs at least one argument typed `KindOf{T}`")
+        wrappererror("@objcmethod needs at least one argument typed `KindOf{T}`")
 
     # Name every positional arg (gensym anonymous ones) so the entry
     # forwarder can pass them through to the body method.
@@ -564,10 +564,10 @@ macro objcdispatch(ex...)
         P = try
             Core.eval(__module__, T_expr)
         catch err
-            wrappererror("@objcdispatch could not resolve `$T_expr` (must be a wrapped class declared earlier): $err")
+            wrappererror("@objcmethod could not resolve `$T_expr` (must be a wrapped class declared earlier): $err")
         end
         P isa Type && P <: Object ||
-            wrappererror("@objcdispatch type parameter `$T_expr` must resolve to a subtype of `Object`, got $P")
+            wrappererror("@objcmethod type parameter `$T_expr` must resolve to a subtype of `Object`, got $P")
     end
 
     # Helper: rewrite the user's positional args into the entry-side shape —
@@ -619,7 +619,7 @@ macro objcdispatch(ex...)
         :body => fwd_call,
     ))
 
-    # Two `@objcdispatch` sites for the same function with disjoint
+    # Two `@objcmethod` sites for the same function with disjoint
     # `KindOf{T}` roots but otherwise identical args produce the same entry
     # signature. Emitting it twice is "method overwriting", which Julia 1.12
     # rejects during precompile. Guard the entry with a top-level check
@@ -648,7 +648,7 @@ macro objcdispatch(ex...)
 end
 
 # True iff `f` has a method whose signature is *exactly* `Tuple{typeof(f),
-# argtypes.parameters...}` — used by `@objcdispatch` to decide whether the
+# argtypes.parameters...}` — used by `@objcmethod` to decide whether the
 # entry forwarder is already in place. `hasmethod` would be too loose
 # (`hasmethod(==, Tuple{Object, Object})` is true via `==(::Any, ::Any)`).
 function has_exact_method(@nospecialize(f), @nospecialize(argtypes::Type))
