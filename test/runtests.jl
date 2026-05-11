@@ -381,6 +381,46 @@ end
     @test !haskey(ObjectiveC.objcdispatch_sites, Object)
     @test_nowarn @eval @objcwrapper TestNSAnyObjSub <: Object
     @test anyobj(mut) === TestNSMutableString
+
+end
+
+# `@objcdispatch open=true` at top level: dispatches on `::Object` with a
+# runtime `inherits_from` guard, so methods remain open to wrappers declared
+# later (e.g. in another package) without re-declaration.
+@objcdispatch open=true open_len_kind(s::KindOf{TestNSString})::Int =
+    Int(@objc [s::id{TestNSString} length]::Culong)
+@objcdispatch open=true open_pair(a::KindOf{TestNSString}, b::KindOf{TestNSOperationQueue}) =
+    (typeof(a), typeof(b))
+@objcwrapper TestOpenLateSub <: TestNSString
+# Isolated parent for the "no-warning" assertion: other tests register
+# closed-world dispatch sites on `TestNSString`, so we need a fresh class.
+@objcwrapper TestOpenRoot <: Object
+@objcdispatch open=true open_root_id(x::KindOf{TestOpenRoot}) = typeof(x)
+@testset "@objcdispatch open=true" begin
+    str1 = "foo"
+    str = TestNSString(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestNSString})
+    mut = TestNSMutableString(@objc [NSMutableString stringWithUTF8String:"abcd"::Ptr{UInt8}]::id{TestNSMutableString})
+    queue = TestNSOperationQueue(@objc [NSOperationQueue new]::id{TestNSOperationQueue})
+
+    # Open dispatch handles the parent and its descendants.
+    @test open_len_kind(mut) == 4
+    @test open_len_kind(str) == 3
+    # …including wrappers declared *after* the method.
+    late_obj = TestOpenLateSub(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestOpenLateSub})
+    @test open_len_kind(late_obj) == 3
+    # MethodError when the runtime class doesn't inherit from the
+    # declared `KindOf` parent.
+    @test_throws MethodError open_len_kind(queue)
+
+    # No call-site registration → no late-subclass warning. Verified on an
+    # isolated parent (`TestOpenRoot`) with no closed-world dispatch sites.
+    @test !haskey(ObjectiveC.objcdispatch_sites, TestOpenRoot)
+    @test_nowarn @eval @objcwrapper TestOpenRootSub <: TestOpenRoot
+
+    # Multi-arg `open=true`: every `KindOf{T}` slot gets its own guard.
+    @test open_pair(mut, queue) === (TestNSMutableString, TestNSOperationQueue)
+    @test_throws MethodError open_pair(queue, queue)
+    @test_throws MethodError open_pair(mut, mut)
 end
 
 using .Foundation

@@ -527,26 +527,57 @@ Base.unsafe_convert(T::Type{<:id}, arr::idArray) =
 
 
 """
-    @objcdispatch f(arg::KindOf{T}, more...)::ret begin
-        # body — `arg` is typed as `Union{T, descendants(T)...}`
+    @objcdispatch [open=false] f(arg::KindOf{T}, more...)::ret begin
+        # body
     end
 
-Define a polymorphic Objective-C method on the class `T` and every currently
-wrapped subclass of `T`. The macro substitutes `KindOf{T}` at expansion time
-with `Union{T, descendants...}`, where descendants come from walking the
-`objc_parent` method table. The result is a regular Julia method on a concrete
-Union, dispatched natively — `typeof(arg)` inside the body is the concrete
-subclass.
+Define a polymorphic Objective-C method on the class `T`. Two dispatch
+modes are supported, picked via the `open` keyword argument:
 
-The substitution is frozen at macro expansion. **Wrappers must be declared
-before any `@objcdispatch` method that should dispatch on them.** Declaring a
-subclass via `@objcwrapper Sub <: Parent` *after* an `@objcdispatch` on
-`KindOf{Parent}` will fire a warning; `Sub` won't flow through the existing
-method until the `@objcwrapper` is moved above it.
+  * `open=false` (default) — **closed-world dispatch.** The macro substitutes
+    `KindOf{T}` at expansion time with `Union{T, descendants...}`, where
+    descendants come from walking the `objc_parent` method table. The result
+    is a regular Julia method on a concrete Union, dispatched natively —
+    `typeof(arg)` inside the body is the concrete subclass. The substitution
+    is frozen; subclasses declared *after* the method via `@objcwrapper
+    Sub <: T` will not flow through it, and a warning fires from the
+    subsequent `@objcwrapper` pointing at the affected call site. Use this
+    mode for methods scoped to a sub-hierarchy fully owned by one module.
 
-Modeled on Objective-C's `__kindof T *` type qualifier.
+  * `open=true` — **open-world dispatch.** The macro substitutes `KindOf{T}`
+    with the abstract apex `Object`, so any current or future wrapper
+    matches dispatch, and prepends a runtime guard
+    `inherits_from(typeof(arg), T) || throw(MethodError(f, (...,)))` to the
+    method body. The call site is not registered (no late-subclass warning).
+    Use this mode for methods that should remain available to any wrapper
+    declared by downstream packages — for example, foundation primitives
+    like `retain`/`release`/`==` that semantically apply to every
+    `KindOf{NSObject}` regardless of which package introduces the subclass.
+
+Both modes use the same `KindOf{T}` spelling at the call site. Modeled on
+Objective-C's `__kindof T *` type qualifier.
 """
-macro objcdispatch(ex)
+macro objcdispatch(ex...)
+    decl = ex[end]
+    kwargs = ex[1:end-1]
+
+    # Parse keyword arguments. Only `open=Bool` is supported.
+    open = false
+    for kw in kwargs
+        if kw isa Expr && kw.head == :(=)
+            key, value = kw.args
+            if key == :open
+                value isa Bool || wrappererror("`open` keyword argument must be a literal boolean")
+                open = value
+            else
+                wrappererror("unrecognized keyword argument: $key")
+            end
+        else
+            wrappererror("invalid keyword argument: $kw")
+        end
+    end
+
+    ex = decl
     # Accept `@objcdispatch @inline function ... end` style by unwrapping
     # leading macro decorators (e.g. `@inline`, `@noinline`).
     decorators = Any[]
@@ -617,10 +648,28 @@ macro objcdispatch(ex)
     isempty(kindof_slots) &&
         wrappererror("@objcdispatch needs at least one argument typed `KindOf{T}`")
 
-    # Resolve every T in the user's module so we can compute each dispatch
-    # Union at macroexpand time. Substitute each slot in turn.
+    # Ensure every positional arg has a name we can reference, both for the
+    # substituted signature and (under `open=true`) for the `MethodError`
+    # tuple. Anonymous-typed args (`::T`) get a gensym; the names are stable
+    # across both passes below.
+    arg_names = Symbol[]
+    for a in args
+        if Meta.isexpr(a, :(::))
+            push!(arg_names, length(a.args) == 2 ? a.args[1] : gensym(:_))
+        elseif a isa Symbol
+            push!(arg_names, a)
+        else
+            push!(arg_names, gensym(:_))
+        end
+    end
+
+    # Resolve every T in the user's module. With `open=false`, substitute
+    # `KindOf{T}` with the closed-world `Union{T, descendants...}`. With
+    # `open=true`, substitute with the apex `Object` so any wrapper matches
+    # dispatch — the runtime guard emitted below enforces the actual T.
     new_args = copy(args)
     parent_types = Type[]
+    open_guards = Tuple{Symbol, Type}[]
     for (idx, T_expr) in kindof_slots
         P = try
             Core.eval(__module__, T_expr)
@@ -631,14 +680,35 @@ macro objcdispatch(ex)
             wrappererror("@objcdispatch type parameter `$T_expr` must resolve to a subtype of `Object`, got $P")
         push!(parent_types, P)
 
-        union_type = objc_kindof_type(P)
-        a = args[idx]
-        arg_name = if Meta.isexpr(a, :(::)) && length(a.args) == 2
-            a.args[1]
+        name = arg_names[idx]
+        if open
+            new_args[idx] = :( $name::$ObjectiveC.Object )
+            push!(open_guards, (name, P))
         else
-            gensym(:_)
+            new_args[idx] = :( $name::$(objc_kindof_type(P)) )
         end
-        new_args[idx] = :( $arg_name::$union_type )
+    end
+
+    # Re-emit anonymous-typed positional args with their gensym name so the
+    # `MethodError` tuple under `open=true` can reference every arg.
+    if open
+        for (i, a) in enumerate(args)
+            if Meta.isexpr(a, :(::)) && length(a.args) == 1 && new_args[i] === a
+                new_args[i] = :( $(arg_names[i])::$(a.args[1]) )
+            end
+        end
+        # Prepend the runtime guard for each `KindOf{T}` arg. The first
+        # mismatching arg throws a `MethodError` carrying every positional
+        # arg, mirroring the message Julia would produce had dispatch failed.
+        guard = Expr(:block)
+        args_tuple = Expr(:tuple, arg_names...)
+        for (name, P) in open_guards
+            push!(guard.args, :(
+                $ObjectiveC.inherits_from(typeof($name), $P) ||
+                    throw(MethodError($fname, $args_tuple))
+            ))
+        end
+        body = Expr(:block, guard, body)
     end
 
     # Reconstruct the signature (with kwargs, where, ret).
@@ -659,12 +729,14 @@ macro objcdispatch(ex)
     end
 
     # Register this call site under every parent T so a later `@objcwrapper
-    # Sub <: T` can warn that the Union is now stale. Skip abstract Ts: their
-    # Union collapses to `T` and Julia's `<:` already covers any subclass.
+    # Sub <: T` can warn that the Union is now stale. Skip abstract Ts (their
+    # Union collapses to `T`) and skip every site under `open=true` (the
+    # method already dispatches via `::Object` and re-checks at runtime, so
+    # there is no stale Union to warn about).
     src_file = String(__source__.file)
     src_line = Int(__source__.line)
     fname_q = QuoteNode(fname isa Symbol ? fname : Symbol(fname))
-    register_calls = [
+    register_calls = open ? Expr[] : [
         :( $ObjectiveC.register_objcdispatch_site!($P, $fname_q, $src_file, $src_line) )
         for P in unique(parent_types) if !isabstracttype(P)
     ]
