@@ -304,21 +304,21 @@ end
     #   TestNSMutableString <: TestNSString <: Object
     # plus a sibling TestNSOperationQueue <: Object.
 
-    # inherits_from: walks the Kind lattice
-    @test inherits_from(TestNSString, TestNSString)
-    @test inherits_from(TestNSMutableString, TestNSString)
-    @test inherits_from(TestNSMutableString, Object)
-    @test !inherits_from(TestNSString, TestNSMutableString)
-    @test !inherits_from(TestNSOperationQueue, TestNSString)
-    @test !inherits_from(TestNSString, TestNSOperationQueue)
+    # ObjectiveC.inherits_from: walks the Kind lattice
+    @test ObjectiveC.inherits_from(TestNSString, TestNSString)
+    @test ObjectiveC.inherits_from(TestNSMutableString, TestNSString)
+    @test ObjectiveC.inherits_from(TestNSMutableString, Object)
+    @test !ObjectiveC.inherits_from(TestNSString, TestNSMutableString)
+    @test !ObjectiveC.inherits_from(TestNSOperationQueue, TestNSString)
+    @test !ObjectiveC.inherits_from(TestNSString, TestNSOperationQueue)
     # non-Object types fall through to `classkind = Nothing`
-    @test !inherits_from(Int, TestNSString)
-    @test !inherits_from(TestNSString, Int)
+    @test !ObjectiveC.inherits_from(Int, TestNSString)
+    @test !ObjectiveC.inherits_from(TestNSString, Int)
 
     # the Kind lattice mirrors the ObjC parent chain
-    @test classkind(TestNSMutableString) <: classkind(TestNSString)
-    @test classkind(TestNSString) <: classkind(Object)
-    @test !(classkind(TestNSOperationQueue) <: classkind(TestNSString))
+    @test ObjectiveC.classkind(TestNSMutableString) <: ObjectiveC.classkind(TestNSString)
+    @test ObjectiveC.classkind(TestNSString) <: ObjectiveC.classkind(Object)
+    @test !(ObjectiveC.classkind(TestNSOperationQueue) <: ObjectiveC.classkind(TestNSString))
 
     # id{Sub} ↔ id{Parent} conversion follows the Kind lattice
     raw = @objc [NSMutableString stringWithUTF8String:"abcd"::Ptr{UInt8}]::id{TestNSMutableString}

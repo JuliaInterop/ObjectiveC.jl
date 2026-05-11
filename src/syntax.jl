@@ -1,5 +1,5 @@
 export @objc, @objcwrapper, @objcproperties, @objcblock, @objcdispatch
-export KindOf, inherits_from, classkind, ObjectKind
+export KindOf
 
 
 # Kind hierarchy: a parallel abstract-type lattice mirroring the ObjC class
