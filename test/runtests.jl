@@ -211,6 +211,13 @@ end
     @test :length in propertynames(bare)
     @test :UTF8String in propertynames(bare)
     @test bare.length == length(str1)
+
+    # Const-prop on literal property access: `obj.length` must infer the
+    # exact return type, not the Union of every property in the ancestor
+    # chain. Regression guard for the `@inline objc_getproperty` cascade.
+    get_len(s) = s.length
+    @test Base.return_types(get_len, (TestNSString,))[1] === Culong
+    @test Base.return_types(get_len, (TestNSStringBareSub,))[1] === Culong
 end
 
 @testset "@objc blocks" begin

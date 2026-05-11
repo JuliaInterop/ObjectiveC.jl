@@ -892,9 +892,12 @@ macro objcproperties(typ, ex)
     # `Base.getproperty` directly, so the ObjC parent chain can be walked at
     # runtime via `objc_parent` (replacing the old `invoke(getproperty,
     # supertype(T), ...)` chain). The wrapper `Base.getproperty(obj::T, field) =
-    # objc_getproperty(T, obj, field)` is the user-facing entry. Julia
-    # specializes `objc_getproperty` per concrete `obj` type at the call site
-    # so type-stability is preserved through the chain.
+    # objc_getproperty(T, obj, field)` is the user-facing entry. The
+    # per-class method is `@inline`d so a literal `obj.length` propagates the
+    # field symbol through both forwarders, letting Julia fold the
+    # `if field === :length` cascade and infer the precise return type
+    # (without it, the body's return type degrades to the Union of every
+    # property type in the ancestor chain).
     #
     # `obj` is intentionally left untyped — the same method must also serve
     # `KindOf{T}` wrappers, which are not `<:Object`.
@@ -918,7 +921,7 @@ macro objcproperties(typ, ex)
                     $ObjectiveC.objc_parent($(esc(typ))), object, field))
         push!(current.args, final)
         getproperties_ex = quote
-            function $ObjectiveC.objc_getproperty(::Type{$(esc(typ))}, object, field::Symbol)
+            @inline function $ObjectiveC.objc_getproperty(::Type{$(esc(typ))}, object, field::Symbol)
                 $getproperties_ex
             end
         end
@@ -945,8 +948,8 @@ macro objcproperties(typ, ex)
                     $ObjectiveC.objc_parent($(esc(typ))), object, field, value))
         push!(current.args, final)
         setproperties_ex = quote
-            function $ObjectiveC.objc_setproperty!(::Type{$(esc(typ))}, object,
-                                                    field::Symbol, value::Any)
+            @inline function $ObjectiveC.objc_setproperty!(::Type{$(esc(typ))}, object,
+                                                            field::Symbol, value::Any)
                 $setproperties_ex
             end
         end
