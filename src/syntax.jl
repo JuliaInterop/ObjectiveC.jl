@@ -429,7 +429,8 @@ macro objcwrapper(ex...)
         name, super = def.args
     elseif def isa Symbol
         name = def
-        super = :Object
+        # qualified so `@objcwrapper Foo` works even without `using ObjectiveC`
+        super = :($ObjectiveC.Object)
     else
         wrappererror()
     end

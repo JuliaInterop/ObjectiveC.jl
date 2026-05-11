@@ -136,6 +136,18 @@ end
     @test_throws UndefRefError TestNSString(nil)
 end
 
+# `@objcwrapper Foo` (no explicit parent) must work from a module that hasn't
+# brought `Object` into scope; the default super has to be fully qualified.
+module NoObjectImport
+    import ..ObjectiveC
+    import ..ObjectiveC: @objcwrapper
+    @objcwrapper NoImportWrapper
+end
+@testset "@objcwrapper default super qualified" begin
+    @test supertype(NoObjectImport.NoImportWrapper) === ObjectiveC.Object
+    @test ObjectiveC.objc_parent(NoObjectImport.NoImportWrapper) === ObjectiveC.Object
+end
+
 @objcproperties TestNSString begin
     @autoproperty length::Culong
     @static if true
