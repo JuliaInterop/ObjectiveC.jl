@@ -262,8 +262,7 @@ end
 @testset "inheritance / @objcdispatch" begin
     # The existing @objcproperties fixture gives us a two-level hierarchy:
     #   TestNSMutableString <: TestNSString <: Object
-    # plus a sibling TestNSOperationQueue <: Object. We add one more leaf to
-    # have a chain deeper than two without using ObjC inheritance subtleties.
+    # plus a sibling TestNSOperationQueue <: Object.
 
     # inherits_from: walks the parent chain
     @test inherits_from(TestNSString, TestNSString)
@@ -287,20 +286,23 @@ end
     @test_throws ArgumentError convert(id{TestNSMutableString}, parent_ptr)
     @test reinterpret(id{TestNSMutableString}, parent_ptr) isa id{TestNSMutableString}
 
-    # KindOf is a bitstype register-sized wrapper
-    @test isbitstype(KindOf{TestNSString})
-    @test sizeof(KindOf{TestNSString}) == sizeof(Ptr{Cvoid})
+    # objc_subtree enumerates parent + descendants via the objc_parent method table
+    sub = ObjectiveC.objc_subtree(TestNSString)
+    @test TestNSString in sub
+    @test TestNSMutableString in sub
+    @test !(TestNSOperationQueue in sub)
+    @test ObjectiveC.objc_subtree(TestNSMutableString) == [TestNSMutableString]
 
-    # @objcdispatch routes any subclass into the KindOf{Parent} body
+    # @objcdispatch expands KindOf{Parent} into Union{Parent, descendants...}
     @objcdispatch testlen(s::KindOf{TestNSString})::Int =
         Int(@objc [s::id{TestNSString} length]::Culong)
 
     mut = TestNSMutableString(raw)
-    @test testlen(mut) == 4   # subclass dispatch
     str = TestNSString(@objc [NSString stringWithUTF8String:"xyz"::Ptr{UInt8}]::id{TestNSString})
+    @test testlen(mut) == 4   # subclass dispatch
     @test testlen(str) == 3   # exact-type dispatch
 
-    # non-conforming Object → MethodError
+    # non-conforming Object → MethodError (Julia's normal Union dispatch)
     queue = TestNSOperationQueue(@objc [NSOperationQueue new]::id{TestNSOperationQueue})
     @test_throws MethodError testlen(queue)
 
@@ -309,15 +311,19 @@ end
         Int(@objc [s::id{TestNSString} length]::Culong)
     @test testlen_qualified(mut) == 4
 
-    # property access through KindOf walks the @objcproperties chain
-    iface = KindOf{TestNSString}(mut)
-    @test iface.length == 4
-    @test :length in propertynames(iface)
-    @test :UTF8String in propertynames(iface)
-    @test unsafe_string(iface.UTF8String) == "abcd"
+    # the body sees the concrete subclass (no wrapper to erase it)
+    @objcdispatch concretetype(s::KindOf{TestNSString}) = typeof(s)
+    @test concretetype(mut) === TestNSMutableString
+    @test concretetype(str) === TestNSString
 
-    # direct KindOf{T}(::Object) construction rejects non-conforming objects
-    @test_throws ArgumentError KindOf{TestNSString}(queue)
+    # property access works natively — no wrapper involved
+    @test mut.length == 4
+    @test unsafe_string(mut.UTF8String) == "abcd"
+
+    # late-subclass warning: declaring a subclass after `@objcdispatch` warns
+    @test_warn r"declared after `@objcdispatch testlen" begin
+        @eval @objcwrapper TestLateSub <: TestNSString
+    end
 end
 
 using .Foundation

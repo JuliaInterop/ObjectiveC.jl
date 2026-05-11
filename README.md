@@ -66,8 +66,8 @@ time. Keeping every wrapper concrete avoids the boxing and inference penalties o
 fields, e.g., `Vector{NSString}` is alloc-free, and inference sees a single fixed type
 through container access.
 
-There are three patterns for writing methods, picked by what kind of polymorphism the
-method needs:
+There are two patterns for writing methods, picked by what kind of polymorphism the method
+needs:
 
 **Method on a single class.** Almost everything. Write a normal Julia method against the
 concrete struct:
@@ -78,17 +78,15 @@ Base.length(s::NSString) = Int(s.length)
 
 This is enough even when ObjC has subclasses of `NSString` at runtime. The actual class of
 the pointer is typically `__NSCFString` or `NSTaggedPointerString`, but since we've only
-`@objcwrapper`'d `NSString`, Julia never sees those subclasses, `typeof(obj)` will
-always be `NSString`, and the ObjectiveC runtime handles dispatch to the real concrete
-class. The same logic applies to Apple framework subclasses you simply haven't wrapped: they
-flow through as the nearest ancestor you *did* wrap.
+`@objcwrapper`'d `NSString`, Julia never sees those subclasses, `typeof(obj)` will always
+be `NSString`, and the ObjectiveC runtime handles dispatch to the real concrete class. The
+same logic applies to Apple framework subclasses you simply haven't wrapped: they flow
+through as the nearest ancestor you *did* wrap.
 
 **Method polymorphic over a class and its subclasses.** When you've reconstructed part of
-the ObjC class hierarchy on the Julia side, i.e. you've written `@objcwrapper Sub <: Parent`,
-and want a method declared on `Parent` to dispatch for `Sub` as well, you should use `@objcdispatch`
-with a `KindOf{T}` argument. The macro emits the canonical body on `KindOf{T}` plus a
-top-level forwarder on `::Object` that routes through `inherits_from`, so callers can pass
-any concrete subclass directly:
+the ObjC class hierarchy on the Julia side — i.e. written `@objcwrapper Sub <: Parent` —
+and want a method declared on `Parent` to dispatch for `Sub` as well, use `@objcdispatch`
+with a `KindOf{T}` argument:
 
 ```julia
 @objcdispatch endEncoding!(ce::KindOf{MTLCommandEncoder}) =
@@ -98,36 +96,24 @@ any concrete subclass directly:
 endEncoding!(blit_encoder)
 ```
 
-**Method needs the concrete subclass at runtime.** When the body has to recover the
-caller's type, e.g. to rebuild the return wrapper, `@objcdispatch` is too lossy as it
-erases the subclass to `KindOf{T}`. Two options give you `typeof(kernel)` back:
-
-Enumerate the wrapped subclasses with a `Union` when the set is closed. Julia specializes
-the method per concrete element, no runtime check needed:
+`KindOf{T}` is a macro-level marker: at macro-expansion time `@objcdispatch` substitutes
+it with `Union{T, descendants(T)...}`, where descendants come from walking the
+`objc_parent` method table. The result is a regular Julia method on a concrete Union,
+dispatched natively — `typeof(arg)` inside the body is the concrete subclass, which lets
+you rebuild the return wrapper or otherwise specialize:
 
 ```julia
-const MPSKernels = Union{MPSImageGaussianBlur, MPSImageBox, MPSMatrixMultiplication, #= ... =#}
-
-function Base.copy(kernel::MPSKernels)
+@objcdispatch function Base.copy(kernel::KindOf{MPSKernel})
     K = typeof(kernel)
     obj = @objc [kernel::id{MPSKernel} copy]::id{MPSKernel}
     K(reinterpret(id{K}, obj))
 end
 ```
 
-Or write a single method on `::Object` with an explicit `inherits_from` guard when the set
-is open, which results in future `@objcwrapper`'d subclasses being picked up automatically
-without touching the method:
-
-```julia
-function Base.copy(kernel::Object)
-    inherits_from(typeof(kernel), MPSKernel) ||
-        throw(MethodError(copy, (kernel,)))
-    K = typeof(kernel)
-    obj = @objc [kernel::id{MPSKernel} copy]::id{MPSKernel}
-    K(reinterpret(id{K}, obj))
-end
-```
+The Union is frozen at macro expansion. **`@objcwrapper Sub <: Parent` must come before
+any `@objcdispatch` on `KindOf{Parent}` or its ancestors** — otherwise the existing method
+won't dispatch on `Sub`, and a warning fires from `@objcwrapper` pointing at the affected
+call site.
 
 
 ## Properties

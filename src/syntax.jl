@@ -20,44 +20,87 @@ inherits_from(::Type, ::Type) = false
 end
 
 
-# Covariant wrapper for polymorphic methods on non-leaf classes — modeled on
-# Objective-C's `__kindof T *` type qualifier.
+# `KindOf{T}` is a *marker* type used exclusively in `@objcdispatch` argument
+# slots — it has no values. The macro substitutes it at expansion time with
+# `Union{T, descendants(T)...}`, where descendants are enumerated by walking
+# the `objc_parent` method table. The result is a regular Julia method on a
+# concrete Union; dispatch goes through native multiple-dispatch with no
+# wrapper, no forwarder, and no runtime `inherits_from` check.
 #
-# `KindOf{T}` wraps the pointer of any object that
-# `inherits_from(typeof(obj), T)`. Methods written on `KindOf{T}` form the
-# canonical implementation, and a top-level dispatcher (emitted by
-# `@objcdispatch`) routes raw `Object` arguments through the `inherits_from`
-# trait. Because `KindOf{T}` only stores a primitive `id{T}` it is itself a
-# bitstype (when T is fixed); the wrap is a register move.
-struct KindOf{T<:Object}
-    ptr::id{T}
-    KindOf{T}(ptr::id{T}) where {T<:Object} = new{T}(ptr)
-end
-# Wrap an existing object as `KindOf{T}`. The forwarder emitted by
-# `@objcdispatch` already gates on `inherits_from`, but direct construction
-# would otherwise silently bitcast — re-check here so the type invariant
-# holds for every constructed value.
-@inline function KindOf{T}(obj::Object) where {T<:Object}
-    inherits_from(typeof(obj), T) ||
-        throw(ArgumentError("$(typeof(obj)) does not inherit from $T"))
-    KindOf{T}(Base.bitcast(id{T}, getfield(obj, :ptr)))
+# Modeled on ObjC's `__kindof T *` type qualifier (covariant subclass pointer).
+struct KindOf{T<:Object} end
+
+# Walk the `objc_parent` method table to enumerate every type that
+# `inherits_from(T, P)`, including P itself. Used by `@objcdispatch` to expand
+# `KindOf{P}` into a Union at macro-expansion time.
+function objc_subtree(P::Type)
+    P <: Object || return Type[P]
+    result = Type[P]
+    queue = Type[P]
+    seen = Set{Type}((P,))
+    while !isempty(queue)
+        current = popfirst!(queue)
+        for m in methods(objc_parent)
+            sig = m.sig
+            sig isa DataType && length(sig.parameters) >= 2 || continue
+            tp = sig.parameters[2]
+            tp isa DataType && tp <: Type || continue
+            length(tp.parameters) == 1 || continue
+            Sub = tp.parameters[1]
+            Sub isa Type && Sub <: Object || continue
+            Sub === Object && continue  # the `Type{Object}` and `Type{<:Object}` fallbacks
+            Sub === current && continue  # skip self (would re-enqueue)
+            objc_parent(Sub) === current || continue
+            if !(Sub in seen)
+                push!(seen, Sub)
+                push!(result, Sub)
+                push!(queue, Sub)
+            end
+        end
+    end
+    return result
 end
 
-# Allow KindOf{T} to satisfy ccall sigs that take `id{T}` or `id{Object}`.
-Base.cconvert(::Type{<:id}, x::KindOf) = x
-@inline Base.unsafe_convert(::Type{id{T}}, x::KindOf{T}) where {T<:Object} = x.ptr
-@inline Base.unsafe_convert(::Type{id{U}}, x::KindOf{T}) where {U<:Object, T<:Object} =
-    Base.bitcast(id{U}, x.ptr)
-Base.pointer(x::KindOf{T}) where {T<:Object} = x.ptr
+# Resolve `KindOf{P}` to its dispatch type — `P` alone if no subclasses are
+# wrapped, or `Union{P, descendants...}` otherwise.
+function objc_kindof_type(P::Type)
+    sub = objc_subtree(P)
+    length(sub) == 1 ? sub[1] : Union{sub...}
+end
 
-# Property access on KindOf{T} routes through T's `objc_getproperty` chain —
-# same as `obj::T` would. The inheritance walk via `objc_parent` delivers
-# parent-class properties transparently.
-@inline Base.getproperty(x::KindOf{T}, field::Symbol) where {T<:Object} =
-    objc_getproperty(T, x, field)
-@inline Base.setproperty!(x::KindOf{T}, field::Symbol, value) where {T<:Object} =
-    objc_setproperty!(T, x, field, value)
-Base.propertynames(::KindOf{T}) where {T<:Object} = objc_propertynames(T)
+
+# Per-parent registry of `@objcdispatch` call sites. Populated as a side
+# effect of each `@objcdispatch` expansion (the macro emits a top-level
+# `register_objcdispatch_site!`). Consulted by `@objcwrapper Sub <: Parent`
+# to warn when a subclass is declared after methods on its ancestor —
+# such methods will not dispatch on `Sub`, because their Union was frozen
+# at the time `@objcdispatch` was processed.
+const objcdispatch_sites = IdDict{Type, Vector{NamedTuple{(:name, :file, :line), Tuple{Symbol, String, Int}}}}()
+
+function register_objcdispatch_site!(P::Type, name::Symbol, file::AbstractString, line::Integer)
+    sites = get!(() -> NamedTuple{(:name, :file, :line), Tuple{Symbol, String, Int}}[], objcdispatch_sites, P)
+    entry = (name=name, file=String(file), line=Int(line))
+    entry in sites || push!(sites, entry)
+    return
+end
+
+function warn_late_subclass(child::Type, parent::Type)
+    p = parent
+    while p isa Type && p <: Object
+        if haskey(objcdispatch_sites, p)
+            for site in objcdispatch_sites[p]
+                @warn """`@objcwrapper $child <: $parent` declared after `@objcdispatch \
+                         $(site.name)(::KindOf{$p}, …)` at $(site.file):$(site.line). \
+                         The existing method will not dispatch on $child; redeclare the \
+                         `@objcdispatch` after the `@objcwrapper`, or move the wrapper \
+                         above the methods."""
+            end
+        end
+        p === Object && break
+        p = objc_parent(p)
+    end
+    return
+end
 
 
 # Tie `id{U}` → `id{T}` conversions to `inherits_from` whenever both are
@@ -436,6 +479,10 @@ macro objcwrapper(ex...)
             $ObjectiveC.objc_getproperty($name, object, field)
         Base.setproperty!(object::$name, field::Symbol, value::Any) =
             $ObjectiveC.objc_setproperty!($name, object, field, value)
+
+        # Warn if any ancestor already has `@objcdispatch` methods — their
+        # frozen Unions won't dispatch on us.
+        $ObjectiveC.warn_late_subclass($name, $super)
     end
 
     # add optional methods
@@ -470,45 +517,25 @@ Base.unsafe_convert(T::Type{<:id}, arr::idArray) =
     reinterpret(T, pointer(arr.ids))
 
 
-# `@objcdispatch f(arg::KindOf{T}, ...)::ret begin ... end`
-#
-# Emits:
-#   1. The canonical implementation on `KindOf{T}` (the macro body).
-#   2. A top-level method on `Object` that routes through `inherits_from`,
-#      so calling `f(::SomeSubclassOfT)` repacks into `KindOf{T}` and
-#      forwards. Because `inherits_from(::Type{Sub}, ::Type{T})` const-folds
-#      to `true` when both are known statically, the indirection compiles to
-#      a register move plus a direct call.
 """
     @objcdispatch f(arg::KindOf{T}, more...)::ret begin
-        # canonical body, may use `arg` as a typed `id{T}` via @objc
+        # body — `arg` is typed as `Union{T, descendants(T)...}`
     end
 
-Define a polymorphic Objective-C method on the class `T`. The canonical body
-runs on a [`KindOf{T}`](@ref) wrapper (modeled on ObjC's `__kindof T *`);
-ObjectiveC.jl additionally generates a top-level method that accepts any
-`Object` and routes through `inherits_from(typeof(obj), T)` — so `f(sub)`
-works for any subclass of `T`, with the dispatch resolved at compile time
-when `typeof(sub)` is known statically.
+Define a polymorphic Objective-C method on the class `T` and every currently
+wrapped subclass of `T`. The macro substitutes `KindOf{T}` at expansion time
+with `Union{T, descendants...}`, where descendants come from walking the
+`objc_parent` method table. The result is a regular Julia method on a concrete
+Union, dispatched natively — `typeof(arg)` inside the body is the concrete
+subclass.
 
-Use this in place of `f(::T) = ...` whenever `T` has subclasses *and* you
-want `f` to dispatch over them. For methods on classes with no subclasses
-(the common case), write a regular Julia method on the concrete struct.
+The substitution is frozen at macro expansion. **Wrappers must be declared
+before any `@objcdispatch` method that should dispatch on them.** Declaring a
+subclass via `@objcwrapper Sub <: Parent` *after* an `@objcdispatch` on
+`KindOf{Parent}` will fire a warning; `Sub` won't flow through the existing
+method until you redeclare it.
 
-Note that the canonical body sees `arg` typed as `KindOf{T}` — the concrete
-subclass is not visible. When you need `typeof(arg)` inside the body
-(e.g. to reconstruct the return wrapper), write a regular method on `::Object`
-with an explicit `inherits_from` guard instead.
-
-# Limitation: forwarder signatures must be distinct
-
-The auto-emitted `Object` forwarder erases `T` to `::Object`. If two
-`@objcdispatch` methods on the same generic function have the same name,
-arity, and types in the remaining argument slots, their forwarders will
-have identical signatures and silently overwrite one another. Disambiguate
-by typing the trailing arguments differently, or — when the colliding
-methods are semantically distinct — write a single manual method on
-`::Object` that branches on `inherits_from`.
+Modeled on Objective-C's `__kindof T *` type qualifier.
 """
 macro objcdispatch(ex)
     # Accept `@objcdispatch @inline function ... end` style by unwrapping
@@ -580,86 +607,55 @@ macro objcdispatch(ex)
     iface_idx === nothing &&
         wrappererror("@objcdispatch needs one argument typed `KindOf{T}`")
 
-    function argname(a)
-        if Meta.isexpr(a, :(::))
-            length(a.args) == 1 && return gensym(:_)   # anonymous typed slot
-            return a.args[1]
-        end
-        a
+    # Resolve T (the `KindOf{T}` parameter) in the user's module so we can
+    # compute the dispatch Union at macroexpand time.
+    P = try
+        Core.eval(__module__, iface_T)
+    catch err
+        wrappererror("@objcdispatch could not resolve `$iface_T` (must be a wrapped class declared earlier): $err")
     end
-    fwd_args = Any[argname(a) for a in args]
+    P isa Type && P <: Object ||
+        wrappererror("@objcdispatch type parameter `$iface_T` must resolve to a subtype of `Object`, got $P")
 
-    # Build the obj-dispatcher signature by swapping `::KindOf{T}` for
-    # `::Object`. For anonymous typed slots (`::T`), restore the gensym name
-    # we synthesized in `fwd_args` so the forwarder body can reference it.
-    obj_args = map(enumerate(args)) do (i, a)
-        if i == iface_idx
-            :( $(fwd_args[i])::$ObjectiveC.Object )
-        elseif Meta.isexpr(a, :(::)) && length(a.args) == 1
-            :( $(fwd_args[i])::$(a.args[1]) )
-        else
-            a
-        end
+    union_type = objc_kindof_type(P)
+
+    # Substitute `KindOf{P}` with the Union at the matched arg slot.
+    new_args = copy(args)
+    iface_a = args[iface_idx]
+    iface_arg_name = if Meta.isexpr(iface_a, :(::)) && length(iface_a.args) == 2
+        iface_a.args[1]
+    else
+        gensym(:_)
     end
+    new_args[iface_idx] = :( $iface_arg_name::$union_type )
 
-    # Reconstruct the canonical signature (with decorators, kwargs, where, ret).
-    function rebuild_sig(call_args)
-        new_sig = Expr(:call, fname, call_args...)
-        if kwparams !== nothing
-            insert!(new_sig.args, 2, kwparams)
-        end
-        for tp in whereparams
-            new_sig = Expr(:where, new_sig, tp)
-        end
-        rettype === nothing ? new_sig : Expr(:(::), new_sig, rettype)
-    end
-
-    canonical = Expr(:function, rebuild_sig(args), body)
-    # Apply decorators back (innermost first, since they were pushed outer-first).
-    for dec in reverse(decorators)
-        canonical = Expr(:macrocall, dec, LineNumberNode(0), canonical)
-    end
-
-    iface_arg_name = fwd_args[iface_idx]
-    wrapped = :( $ObjectiveC.KindOf{$iface_T}($iface_arg_name) )
-    fwd_call_args = copy(fwd_args)
-    fwd_call_args[iface_idx] = wrapped
-
-    fwd_call = Expr(:call, fname, fwd_call_args...)
-    # Forward kwargs by splat
+    # Reconstruct the signature (with kwargs, where, ret).
+    new_sig = Expr(:call, fname, new_args...)
     if kwparams !== nothing
-        # call site: f(args...; kwargs...) — collect kw names from kwparams
-        kw_names = Any[]
-        for kw in kwparams.args
-            if Meta.isexpr(kw, :kw)
-                push!(kw_names, kw.args[1])
-            elseif Meta.isexpr(kw, :(::))
-                push!(kw_names, kw.args[1])
-            else
-                push!(kw_names, kw)
-            end
-        end
-        # build `f(args...; k1=k1, k2=k2)`
-        fwd_kwparams = Expr(:parameters, [Expr(:kw, n isa Symbol ? n : n.args[1],
-                                                n isa Symbol ? n : n.args[1]) for n in kw_names]...)
-        insert!(fwd_call.args, 2, fwd_kwparams)
+        insert!(new_sig.args, 2, kwparams)
+    end
+    for tp in whereparams
+        new_sig = Expr(:where, new_sig, tp)
+    end
+    if rettype !== nothing
+        new_sig = Expr(:(::), new_sig, rettype)
     end
 
-    obj_body = quote
-        $ObjectiveC.inherits_from(typeof($iface_arg_name), $iface_T) ||
-            throw(MethodError($fname, ($(fwd_args...),)))
-        $fwd_call
-    end
-
-    obj_fn = Expr(:function, rebuild_sig(obj_args), obj_body)
-    # Reuse decorators on the dispatcher too (e.g., @inline forwarder)
+    method_def = Expr(:function, new_sig, body)
     for dec in reverse(decorators)
-        obj_fn = Expr(:macrocall, dec, LineNumberNode(0), obj_fn)
+        method_def = Expr(:macrocall, dec, LineNumberNode(0), method_def)
     end
+
+    # Register this call site so a later `@objcwrapper Sub <: P` can warn that
+    # the Union is now stale.
+    src_file = String(__source__.file)
+    src_line = Int(__source__.line)
+    fname_q = QuoteNode(fname isa Symbol ? fname : Symbol(fname))
+    register_call = :( $ObjectiveC.register_objcdispatch_site!($P, $fname_q, $src_file, $src_line) )
 
     esc(quote
-        Core.@__doc__ $canonical
-        $obj_fn
+        Core.@__doc__ $method_def
+        $register_call
     end)
 end
 
