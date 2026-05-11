@@ -11,19 +11,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['1.10', 'pre', 'nightly']
-        os: ['macOS-13', 'macOS-latest']
+        version: ['min', '1', 'pre', 'nightly']
+        os: ['macos-14', 'macos-15', 'macos-26']
         include:
-          - os: 'macOS-13'
+          - os: 'macos-15'
             arch: 'x64'
-          - os: 'macOS-latest'
+          - os: 'macos-26'
+            arch: 'x64'
+          - os: 'macos-14'
+            arch: 'aarch64'
+          - os: 'macos-15'
+            arch: 'aarch64'
+          - os: 'macos-26'
             arch: 'aarch64'
     steps:
       - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
+          force-arch: true
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
