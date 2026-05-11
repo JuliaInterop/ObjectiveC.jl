@@ -324,6 +324,25 @@ end
     @test_warn r"declared after `@objcdispatch testlen" begin
         @eval @objcwrapper TestLateSub <: TestNSString
     end
+
+    # multiple `KindOf{T}` slots are all substituted (issue: previously only
+    # the first slot was rewritten, leaving the rest as the empty marker).
+    @objcdispatch pair_same(a::KindOf{TestNSString}, b::KindOf{TestNSString}) =
+        (typeof(a), typeof(b))
+    @test pair_same(mut, str) === (TestNSMutableString, TestNSString)
+    @test pair_same(str, mut) === (TestNSString, TestNSMutableString)
+
+    # different `KindOf{T}` parents in a single signature
+    @objcdispatch pair_mixed(a::KindOf{TestNSString}, b::KindOf{TestNSOperationQueue}) =
+        (typeof(a), typeof(b))
+    @test pair_mixed(mut, queue) === (TestNSMutableString, TestNSOperationQueue)
+
+    # other positional args may be anonymous-typed (`::SomeType`) — that's
+    # a one-element `::` expression and must not be confused for a KindOf
+    # slot when locating substitutions.
+    @objcdispatch with_anon(s::KindOf{TestNSString}, ::Type{T}) where {T<:Integer} =
+        (typeof(s), T)
+    @test with_anon(mut, Int32) === (TestNSMutableString, Int32)
 end
 
 using .Foundation

@@ -594,40 +594,43 @@ macro objcdispatch(ex)
         return false
     end
 
-    # Locate the `KindOf{T}` argument; remember the type parameter T.
-    iface_idx = nothing
-    iface_T = nothing
+    # Locate every `KindOf{T}` argument and remember each type parameter T.
+    # All slots are substituted independently — `f(::KindOf{A}, ::KindOf{B})`
+    # produces a method with both slots expanded to their respective Unions.
+    # The arg may be named (`x::T`, length 2) or anonymous (`::T`, length 1).
+    kindof_slots = Tuple{Int, Any}[]
     for (i, a) in enumerate(args)
-        if Meta.isexpr(a, :(::)) && is_kindof_type(a.args[2])
-            iface_idx = i
-            iface_T = a.args[2].args[2]
-            break
-        end
+        Meta.isexpr(a, :(::)) || continue
+        typ = a.args[end]
+        is_kindof_type(typ) || continue
+        push!(kindof_slots, (i, typ.args[2]))
     end
-    iface_idx === nothing &&
-        wrappererror("@objcdispatch needs one argument typed `KindOf{T}`")
+    isempty(kindof_slots) &&
+        wrappererror("@objcdispatch needs at least one argument typed `KindOf{T}`")
 
-    # Resolve T (the `KindOf{T}` parameter) in the user's module so we can
-    # compute the dispatch Union at macroexpand time.
-    P = try
-        Core.eval(__module__, iface_T)
-    catch err
-        wrappererror("@objcdispatch could not resolve `$iface_T` (must be a wrapped class declared earlier): $err")
-    end
-    P isa Type && P <: Object ||
-        wrappererror("@objcdispatch type parameter `$iface_T` must resolve to a subtype of `Object`, got $P")
-
-    union_type = objc_kindof_type(P)
-
-    # Substitute `KindOf{P}` with the Union at the matched arg slot.
+    # Resolve every T in the user's module so we can compute each dispatch
+    # Union at macroexpand time. Substitute each slot in turn.
     new_args = copy(args)
-    iface_a = args[iface_idx]
-    iface_arg_name = if Meta.isexpr(iface_a, :(::)) && length(iface_a.args) == 2
-        iface_a.args[1]
-    else
-        gensym(:_)
+    parent_types = Type[]
+    for (idx, T_expr) in kindof_slots
+        P = try
+            Core.eval(__module__, T_expr)
+        catch err
+            wrappererror("@objcdispatch could not resolve `$T_expr` (must be a wrapped class declared earlier): $err")
+        end
+        P isa Type && P <: Object ||
+            wrappererror("@objcdispatch type parameter `$T_expr` must resolve to a subtype of `Object`, got $P")
+        push!(parent_types, P)
+
+        union_type = objc_kindof_type(P)
+        a = args[idx]
+        arg_name = if Meta.isexpr(a, :(::)) && length(a.args) == 2
+            a.args[1]
+        else
+            gensym(:_)
+        end
+        new_args[idx] = :( $arg_name::$union_type )
     end
-    new_args[iface_idx] = :( $iface_arg_name::$union_type )
 
     # Reconstruct the signature (with kwargs, where, ret).
     new_sig = Expr(:call, fname, new_args...)
@@ -646,16 +649,19 @@ macro objcdispatch(ex)
         method_def = Expr(:macrocall, dec, LineNumberNode(0), method_def)
     end
 
-    # Register this call site so a later `@objcwrapper Sub <: P` can warn that
-    # the Union is now stale.
+    # Register this call site under every parent T so a later `@objcwrapper
+    # Sub <: T` can warn that the Union is now stale.
     src_file = String(__source__.file)
     src_line = Int(__source__.line)
     fname_q = QuoteNode(fname isa Symbol ? fname : Symbol(fname))
-    register_call = :( $ObjectiveC.register_objcdispatch_site!($P, $fname_q, $src_file, $src_line) )
+    register_calls = [
+        :( $ObjectiveC.register_objcdispatch_site!($P, $fname_q, $src_file, $src_line) )
+        for P in unique(parent_types)
+    ]
 
     esc(quote
         Core.@__doc__ $method_def
-        $register_call
+        $(register_calls...)
     end)
 end
 
