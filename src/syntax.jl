@@ -63,7 +63,13 @@ end
 
 # Resolve `KindOf{P}` to its dispatch type — `P` alone if no subclasses are
 # wrapped, or `Union{P, descendants...}` otherwise.
+#
+# When `P` is abstract (e.g. `Object` itself), every wrapper is already
+# `<: P` in Julia's type system, so `Union{P, descendants...}` simplifies to
+# `P` and a `KindOf{P}` dispatch is just `::P`. Short-circuit so we don't
+# walk the method table or register a stale-Union watcher.
 function objc_kindof_type(P::Type)
+    isabstracttype(P) && return P
     sub = objc_subtree(P)
     length(sub) == 1 ? sub[1] : Union{sub...}
 end
@@ -653,13 +659,14 @@ macro objcdispatch(ex)
     end
 
     # Register this call site under every parent T so a later `@objcwrapper
-    # Sub <: T` can warn that the Union is now stale.
+    # Sub <: T` can warn that the Union is now stale. Skip abstract Ts: their
+    # Union collapses to `T` and Julia's `<:` already covers any subclass.
     src_file = String(__source__.file)
     src_line = Int(__source__.line)
     fname_q = QuoteNode(fname isa Symbol ? fname : Symbol(fname))
     register_calls = [
         :( $ObjectiveC.register_objcdispatch_site!($P, $fname_q, $src_file, $src_line) )
-        for P in unique(parent_types)
+        for P in unique(parent_types) if !isabstracttype(P)
     ]
 
     esc(quote

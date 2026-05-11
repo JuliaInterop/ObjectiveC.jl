@@ -365,6 +365,15 @@ end
     @objcdispatch with_anon(s::KindOf{TestNSString}, ::Type{T}) where {T<:Integer} =
         (typeof(s), T)
     @test with_anon(mut, Int32) === (TestNSMutableString, Int32)
+
+    # `KindOf{T}` with an abstract T (e.g. `Object`) collapses to `T` because
+    # every wrapper is already `<: T` in Julia's type system. The dispatch
+    # site should not be registered, so subsequent `@objcwrapper`s don't
+    # warn that the Union is stale (it never was a Union).
+    @objcdispatch anyobj(x::KindOf{Object}) = typeof(x)
+    @test !haskey(ObjectiveC.objcdispatch_sites, Object)
+    @test_nowarn @eval @objcwrapper TestNSAnyObjSub <: Object
+    @test anyobj(mut) === TestNSMutableString
 end
 
 using .Foundation
