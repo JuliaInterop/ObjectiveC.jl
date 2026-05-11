@@ -91,9 +91,8 @@ function warn_late_subclass(child::Type, parent::Type)
             for site in objcdispatch_sites[p]
                 @warn """`@objcwrapper $child <: $parent` declared after `@objcdispatch \
                          $(site.name)(::KindOf{$p}, …)` at $(site.file):$(site.line). \
-                         The existing method will not dispatch on $child; redeclare the \
-                         `@objcdispatch` after the `@objcwrapper`, or move the wrapper \
-                         above the methods."""
+                         The existing method will not dispatch on $child; move the \
+                         `@objcwrapper` above the `@objcdispatch`."""
             end
         end
         p === Object && break
@@ -536,7 +535,7 @@ The substitution is frozen at macro expansion. **Wrappers must be declared
 before any `@objcdispatch` method that should dispatch on them.** Declaring a
 subclass via `@objcwrapper Sub <: Parent` *after* an `@objcdispatch` on
 `KindOf{Parent}` will fire a warning; `Sub` won't flow through the existing
-method until you redeclare it.
+method until the `@objcwrapper` is moved above it.
 
 Modeled on Objective-C's `__kindof T *` type qualifier.
 """
