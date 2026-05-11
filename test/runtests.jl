@@ -514,6 +514,14 @@ end
 end
 
 @testset "notifications" begin
+    # Drain pending sources after an async post. `run_loop(t;
+    # return_after_source_handled=true)` returns after handling *one* source,
+    # but each observer fire is its own source, so a single spin can leave
+    # additional observers queued.
+    drain() = while run_loop(0.1; return_after_source_handled=true) ==
+                    CoreFoundation.RunLoopRunHandledSource
+              end
+
     for (center, synchronous) in [(local_notify_center(), true),
                                   (darwin_notify_center(), false)]
         foo_calls = 0
@@ -536,16 +544,12 @@ end
             add_observer!(center, foobar_observer; name="bar")
 
             post_notification!(center, "foo")
-            if !synchronous
-                run_loop(10; return_after_source_handled=true)
-            end
+            synchronous || drain()
             @test foo_calls == 1
             @test foobar_calls == 1
 
             post_notification!(center, "bar")
-            if !synchronous
-                run_loop(10; return_after_source_handled=true)
-            end
+            synchronous || drain()
             @test bar_calls == 1
             @test foobar_calls == 2
 
@@ -553,16 +557,12 @@ end
             remove_observer!(center, foobar_observer; name="foo")
 
             post_notification!(center, "foo")
-            if !synchronous
-                run_loop(10; return_after_source_handled=true)
-            end
+            synchronous || drain()
             @test foo_calls == 2
             @test foobar_calls == 2
 
             post_notification!(center, "bar")
-            if !synchronous
-                run_loop(10; return_after_source_handled=true)
-            end
+            synchronous || drain()
             @test bar_calls == 2
             @test foobar_calls == 3
 
@@ -570,9 +570,7 @@ end
             remove_observer!(center, foobar_observer)
 
             post_notification!(center, "bar")
-            if !synchronous
-                run_loop(10; return_after_source_handled=true)
-            end
+            synchronous || drain()
             @test bar_calls == 3
             @test foobar_calls == 3
         finally
