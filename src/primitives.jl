@@ -132,10 +132,20 @@ Base.:(==)(x::Ptr, y::id) = throw(ArgumentError("Cannot compare id with Ptr"))
 function Base.convert(::Type{id{T}}, x::id{U}) where {T,U}
     # nil is an exception (we want to be able to use `nil` in `@objc` directly)
     x == nil && return Base.bitcast(id{T}, nil)
-    # otherwise, types must match (i.e., only allow converting to a supertype)
-    U <: T || throw(ArgumentError("Cannot convert id{$U} to id{$T}"))
+    # allow conversion to a Julia supertype, or up an Objective-C inheritance
+    # chain (encoded by `inherits_from`, which is forward-declared and defined
+    # in syntax.jl). When both U and T are concrete leaf classes, Julia's `<:`
+    # alone is insufficient — every `@objcwrapper` class is <:Object but not
+    # <:its-ObjC-parent.
+    if !(U <: T) && !(compatible_id_types(T, U)::Bool)
+        throw(ArgumentError("Cannot convert id{$U} to id{$T}"))
+    end
     Base.bitcast(id{T}, x)
 end
+
+# default: only Julia subtyping. syntax.jl extends this to use `inherits_from`
+# for the Object hierarchy.
+compatible_id_types(::Type, ::Type) = false
 
 # conversion to integer
 Base.Int(x::id)  = Base.bitcast(Int, x)
@@ -153,12 +163,12 @@ Base.unsafe_convert(::Type{P}, x::id) where {P<:id} = convert(P, x)
 
 # Objects
 
-# Object is an abstract type, so that we can define subtypes with constructors.
-# The expected interface is that any subtype of Object should be convertible to id.
-
+# Object is the sole abstract supertype of every Objective-C wrapper. Each
+# `@objcwrapper` declaration emits a concrete `struct`/`mutable struct` that
+# inherits directly from `Object`. The Objective-C class hierarchy is encoded
+# via a recursive `inherits_from` trait (see syntax.jl) rather than via
+# Julia's `<:` relation.
 abstract type Object end
-# interface: subtypes of Object should be convertible to `id`s
-#            (i.e., `Base.unsafe_convert(::Type{id}, ::MyObj)`)
 
 const nil = id{Object}(0)
 
@@ -171,10 +181,3 @@ class(obj::Union{Object,id}) =
 Base.methods(obj::Union{Object,id}) = methods(class(obj))
 
 Base.show(io::IO, obj::T) where {T <: Object} = print(io, "$T (object of type ", class(obj), ")")
-
-struct UnknownObject <: Object
-    ptr::id
-    UnknownObject(ptr::id) = new(ptr)
-end
-Base.unsafe_convert(T::Type{<:id}, obj::UnknownObject) = convert(T, obj.ptr)
-Object(ptr::id) = UnknownObject(ptr)

@@ -41,23 +41,92 @@ julia> obj_ptr = @objc [NSValue valueWithPointer:C_NULL::Ptr{Cvoid}]::id{NSValue
 id{NSValue}(0x00006000023cfca0)
 
 julia> obj = NSValue(obj_ptr)
-NSValueInstance (object of type NSConcreteValue)
+NSValue (object of type NSConcreteValue)
 ```
 
-The generated `NSValue` class is an abstract type that implements the type hierarchy, while
-the `NSValueInstance` object is a concrete structure that houses the `id` pointer. This
-split makes it possible to implement multi-level inheritance and attach functionality at
-each level of the hierarchy, and should be entirely transparent to the user (i.e., you
-should never need to use the `*Instance` types in code or signatures).
-
-The `@objcwrapper` macro also generates conversion routines and accessors that makes it
-possible to use these objects directly with `@objc` calls that require `id` pointers:
+`@objcwrapper` emits a concrete `struct NSValue <: Object` holding the `id` pointer. The
+macro also generates conversion routines so the wrapper can be passed directly to `@objc`
+calls expecting `id`:
 
 ```julia
 julia> get_pointer(val::NSValue) = @objc [val::id{NSValue} pointerValue]::Ptr{Cvoid}
 
 julia> get_pointer(obj)
 Ptr{Nothing} @0x0000000000000000
+```
+
+
+## Type model
+
+Every `@objcwrapper` declaration produces a concrete struct that subtypes the abstract
+`Object` directly, even given chains like `@objcwrapper Foo <: Bar`. Julia's `<:` therefore
+only sees `Foo <: Object`, *not* `Foo <: Bar`. The Objective-C class hierarchy is recorded
+separately as a trait (`objc_parent` / `inherits_from`) that the package walks at compile
+time. Keeping every wrapper concrete avoids the boxing and inference penalties of abstract
+fields, e.g., `Vector{NSString}` is alloc-free, and inference sees a single fixed type
+through container access.
+
+There are three patterns for writing methods, picked by what kind of polymorphism the
+method needs:
+
+**Method on a single class.** Almost everything. Write a normal Julia method against the
+concrete struct:
+
+```julia
+Base.length(s::NSString) = Int(s.length)
+```
+
+This is enough even when ObjC has subclasses of `NSString` at runtime. The actual class of
+the pointer is typically `__NSCFString` or `NSTaggedPointerString`, but since we've only
+`@objcwrapper`'d `NSString`, Julia never sees those subclasses, `typeof(obj)` will
+always be `NSString`, and the ObjectiveC runtime handles dispatch to the real concrete
+class. The same logic applies to Apple framework subclasses you simply haven't wrapped: they
+flow through as the nearest ancestor you *did* wrap.
+
+**Method polymorphic over a class and its subclasses.** When you've reconstructed part of
+the ObjC class hierarchy on the Julia side, i.e. you've written `@objcwrapper Sub <: Parent`,
+and want a method declared on `Parent` to dispatch for `Sub` as well, you should use `@objcdispatch`
+with a `KindOf{T}` argument. The macro emits the canonical body on `KindOf{T}` plus a
+top-level forwarder on `::Object` that routes through `inherits_from`, so callers can pass
+any concrete subclass directly:
+
+```julia
+@objcdispatch endEncoding!(ce::KindOf{MTLCommandEncoder}) =
+    @objc [ce::id{MTLCommandEncoder} endEncoding]::Nothing
+
+# any MTLCommandEncoder subclass flows through
+endEncoding!(blit_encoder)
+```
+
+**Method needs the concrete subclass at runtime.** When the body has to recover the
+caller's type, e.g. to rebuild the return wrapper, `@objcdispatch` is too lossy as it
+erases the subclass to `KindOf{T}`. Two options give you `typeof(kernel)` back:
+
+Enumerate the wrapped subclasses with a `Union` when the set is closed. Julia specializes
+the method per concrete element, no runtime check needed:
+
+```julia
+const MPSKernels = Union{MPSImageGaussianBlur, MPSImageBox, MPSMatrixMultiplication, #= ... =#}
+
+function Base.copy(kernel::MPSKernels)
+    K = typeof(kernel)
+    obj = @objc [kernel::id{MPSKernel} copy]::id{MPSKernel}
+    K(reinterpret(id{K}, obj))
+end
+```
+
+Or write a single method on `::Object` with an explicit `inherits_from` guard when the set
+is open, which results in future `@objcwrapper`'d subclasses being picked up automatically
+without touching the method:
+
+```julia
+function Base.copy(kernel::Object)
+    inherits_from(typeof(kernel), MPSKernel) ||
+        throw(MethodError(copy, (kernel,)))
+    K = typeof(kernel)
+    obj = @objc [kernel::id{MPSKernel} copy]::id{MPSKernel}
+    K(reinterpret(id{K}, obj))
+end
 ```
 
 

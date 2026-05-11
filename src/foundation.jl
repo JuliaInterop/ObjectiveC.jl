@@ -33,7 +33,7 @@ export NSObject, retain, release, autorelease, is_kind_of
     @autoproperty retainCount::NSUInteger
 end
 
-function Base.show(io::IO, ::MIME"text/plain", obj::NSObject)
+function Base.show(io::IO, ::MIME"text/plain", obj::Object)
     if get(io, :compact, false)
         print(io, String(obj.description))
     else
@@ -41,19 +41,22 @@ function Base.show(io::IO, ::MIME"text/plain", obj::NSObject)
     end
 end
 
-release(obj::NSObject) = @objc [obj::id{NSObject} release]::Cvoid
+# Methods that ObjC defines on NSObject (so available on every ObjC object).
+# We type them on `Object` directly so any wrapper participates without an
+# Interface{NSObject} wrapper.
+release(obj::Object) = @objc [obj::id{NSObject} release]::Cvoid
 
-autorelease(obj::NSObject) = @objc [obj::id{NSObject} autorelease]::Cvoid
+autorelease(obj::Object) = @objc [obj::id{NSObject} autorelease]::Cvoid
 
-retain(obj::NSObject) = @objc [obj::id{NSObject} retain]::Cvoid
+retain(obj::Object) = @objc [obj::id{NSObject} retain]::Cvoid
 
-ObjectiveC.class(obj::NSObject) = @objc [obj::id{NSObject} class]::Class
-
-function is_kind_of(obj::NSObject, class::Class)
+function is_kind_of(obj::Object, class::Class)
     @objc [obj::id{NSObject} isKindOfClass:class::Class]::Bool
 end
 
-function Base.:(==)(obj1::NSObject, obj2::NSObject)
+# Default equality for ObjC objects via `isEqual:`. Specific classes can
+# override this for a faster path (NSString, NSURL, etc. already do).
+function Base.:(==)(obj1::Object, obj2::Object)
     @objc [obj1::id{NSObject} isEqual:obj2::id{NSObject}]::Bool
 end
 
@@ -299,7 +302,7 @@ end
 
 NSArray() = NSArray(@objc [NSArray array]::id{NSArray})
 
-function NSArray(elements::Vector{<:NSObject})
+function NSArray(elements::Vector{<:Object})
     arr = @objc [NSArray arrayWithObjects:elements::id{Object}
                                     count:length(elements)::NSUInteger]::id{NSArray}
     return NSArray(arr)
@@ -335,7 +338,7 @@ end
 
 NSDictionary() = NSDictionary(@objc [NSDictionary dictionary]::id{NSDictionary})
 
-function NSDictionary(items::Dict{<:NSObject,<:NSObject})
+function NSDictionary(items::Dict{<:Object,<:Object})
     nskeys = NSArray(collect(keys(items)))
     nsvals = NSArray(collect(values(items)))
     dict = @objc [NSDictionary dictionaryWithObjects:nsvals::id{NSArray}
@@ -349,7 +352,7 @@ Base.isempty(dict::NSDictionary) = length(dict) == 0
 Base.keys(dict::NSDictionary) = dict.allKeys
 Base.values(dict::NSDictionary) = dict.allValues
 
-function Base.getindex(dict::NSDictionary, key::NSObject)
+function Base.getindex(dict::NSDictionary, key::Object)
     ptr = @objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::id{Object}
     ptr == nil && throw(KeyError(key))
     return ptr

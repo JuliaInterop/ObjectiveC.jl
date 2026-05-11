@@ -1,4 +1,70 @@
-export @objc, @objcwrapper, @objcproperties, @objcblock
+export @objc, @objcwrapper, @objcproperties, @objcblock, @objcdispatch
+export KindOf, inherits_from
+
+
+# Class hierarchy as a runtime trait
+#
+# Each `@objcwrapper Foo <: Bar` declaration emits `objc_parent(::Type{Foo}) = Bar`.
+# `inherits_from(T, S)` walks the chain; the recursion is `@inline` and folds to a
+# compile-time constant whenever T and S are statically known.
+
+objc_parent(::Type{Object}) = nothing
+objc_parent(::Type{<:Object}) = nothing   # fallback for classes declared without a `<: parent` clause
+
+inherits_from(::Type, ::Type) = false
+@inline function inherits_from(::Type{T}, ::Type{S}) where {T<:Object, S<:Object}
+    T === S && return true
+    P = objc_parent(T)
+    P === nothing && return false
+    inherits_from(P, S)
+end
+
+
+# Covariant wrapper for polymorphic methods on non-leaf classes — modeled on
+# Objective-C's `__kindof T *` type qualifier.
+#
+# `KindOf{T}` wraps the pointer of any object that
+# `inherits_from(typeof(obj), T)`. Methods written on `KindOf{T}` form the
+# canonical implementation, and a top-level dispatcher (emitted by
+# `@objcdispatch`) routes raw `Object` arguments through the `inherits_from`
+# trait. Because `KindOf{T}` only stores a primitive `id{T}` it is itself a
+# bitstype (when T is fixed); the wrap is a register move.
+struct KindOf{T<:Object}
+    ptr::id{T}
+    KindOf{T}(ptr::id{T}) where {T<:Object} = new{T}(ptr)
+end
+# Wrap an existing object as `KindOf{T}`. The forwarder emitted by
+# `@objcdispatch` already gates on `inherits_from`, but direct construction
+# would otherwise silently bitcast — re-check here so the type invariant
+# holds for every constructed value.
+@inline function KindOf{T}(obj::Object) where {T<:Object}
+    inherits_from(typeof(obj), T) ||
+        throw(ArgumentError("$(typeof(obj)) does not inherit from $T"))
+    KindOf{T}(Base.bitcast(id{T}, getfield(obj, :ptr)))
+end
+
+# Allow KindOf{T} to satisfy ccall sigs that take `id{T}` or `id{Object}`.
+Base.cconvert(::Type{<:id}, x::KindOf) = x
+@inline Base.unsafe_convert(::Type{id{T}}, x::KindOf{T}) where {T<:Object} = x.ptr
+@inline Base.unsafe_convert(::Type{id{U}}, x::KindOf{T}) where {U<:Object, T<:Object} =
+    Base.bitcast(id{U}, x.ptr)
+Base.pointer(x::KindOf{T}) where {T<:Object} = x.ptr
+
+# Property access on KindOf{T} routes through T's `objc_getproperty` chain —
+# same as `obj::T` would. The inheritance walk via `objc_parent` delivers
+# parent-class properties transparently.
+@inline Base.getproperty(x::KindOf{T}, field::Symbol) where {T<:Object} =
+    objc_getproperty(T, x, field)
+@inline Base.setproperty!(x::KindOf{T}, field::Symbol, value) where {T<:Object} =
+    objc_setproperty!(T, x, field, value)
+Base.propertynames(::KindOf{T}) where {T<:Object} = objc_propertynames(T)
+
+
+# Tie `id{U}` → `id{T}` conversions to `inherits_from` whenever both are
+# `<:Object`. Forward-declared in primitives.jl; the actual check lives here so
+# it can use `inherits_from`.
+compatible_id_types(::Type{T}, ::Type{U}) where {T<:Object, U<:Object} =
+    inherits_from(U, T)
 
 
 # Method Calling
@@ -263,25 +329,28 @@ wrappererror(msg) = error("""ObjectiveC wrapper: $msg
 """
     @objcwrapper [kwargs] name [<: super]
 
-Helper macro to define a set of Julia classes for wrapping Objective-C pointers.
+Define a Julia struct that wraps an Objective-C object pointer.
 
-Because Objective-C supports multilevel inheritance, we cannot directly translate its
-class model to Julia's. Instead, we define an abstract class `name` that implements the
-requested hierarchy (extending `super`, which defaults to `Object`), along with an instance
-class `$(name)Instance` that wraps an Objective-C pointer.
+Each declaration generates a concrete `struct name <: Object` (or
+`mutable struct` when `immutable=false`) holding a single `ptr::id{name}` field.
+The Objective-C class hierarchy is recorded by emitting
+`objc_parent(::Type{name}) = super` (defaulting to `Object`), which the
+recursive `inherits_from` trait uses to model `<:`-style relationships at the
+ObjC layer without forcing a Julia abstract type for each non-leaf class.
 
-The split into two classes should not be visible to the end user. Methods should only ever
-use the `name` class, both for dispatch purposes and when constructing objects.
+Methods can be written directly on the concrete struct (e.g.
+`length(s::NSString) = ...`); polymorphic methods over an inheritance chain
+should be expressed via [`@objcdispatch`](@ref).
 
-In addition to this boilerplate, `@objcwrapper`'s code generation can be customized through
-keyword arguments:
+Keyword arguments:
 
-  * `immutable`: if `true` (default), define the instance class as an immutable. Should be
-    disabled when you want to use finalizers.
-  * `availability`: A `PlatformAvailability` object that represents the availability of the object.
-  * `comparison`: if `true` (default `false`), define `==` and `hash` methods for the
-    wrapper class. This should not be necessary when using an immutable struct, in which
-    case the default `==` and `hash` methods are sufficient.
+  * `immutable`: if `true` (default), define the wrapper as an immutable struct.
+    Should be disabled when you want to attach finalizers (e.g., for objects
+    that need explicit `release`).
+  * `availability`: a `PlatformAvailability` describing the OS/version
+    availability of the class.
+  * `comparison`: if `true` (default `false`), define `==` and `hash` for the
+    wrapper class. Mostly useful for `mutable struct` wrappers.
 """
 macro objcwrapper(ex...)
     def = ex[end]
@@ -318,47 +387,55 @@ macro objcwrapper(ex...)
         name, super = def.args
     elseif def isa Symbol
         name = def
-        super = Object
+        super = :Object
     else
         wrappererror()
     end
 
-    # generate type hierarchy
-    ex = quote
-        abstract type $name <: $super end
-    end
-
-    # generate the instance class
-    instance = Symbol(name, "Instance")
-    ex = if immutable
+    # define the concrete struct. The constructor checks availability and rejects nil.
+    structdef = if immutable
         quote
-            $(ex.args...)
-            struct $instance <: $name
-                ptr::id{$name}
+            struct $name <: $ObjectiveC.Object
+                ptr::$ObjectiveC.id{$name}
+                function $name(ptr::$ObjectiveC.id)
+                    @static if !$ObjectiveC.is_available($availability)
+                        throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
+                    end
+                    ptr == $ObjectiveC.nil && throw(UndefRefError())
+                    new(ptr)
+                end
             end
         end
     else
         quote
-            $(ex.args...)
-            mutable struct $instance <: $name
-                ptr::id{$name}
+            mutable struct $name <: $ObjectiveC.Object
+                ptr::$ObjectiveC.id{$name}
+                function $name(ptr::$ObjectiveC.id)
+                    @static if !$ObjectiveC.is_available($availability)
+                        throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
+                    end
+                    ptr == $ObjectiveC.nil && throw(UndefRefError())
+                    new(ptr)
+                end
             end
         end
     end
 
-    # add essential methods
     ex = quote
-        $(ex.args...)
+        $(structdef.args...)
 
-        # add a pseudo constructor to the abstract type that also checks for nil pointers.
-        function $name(ptr::id)
-            @static if !ObjectiveC.is_available($availability)
-                throw($UnavailableError(Symbol($name), $availability))
-            end
+        # record the immediate ObjC parent for `inherits_from`.
+        $ObjectiveC.objc_parent(::Type{$name}) = $super
 
-            ptr == nil && throw(UndefRefError())
-            $instance(ptr)
-        end
+        # default property forwarders. `@objcproperties` may override
+        # `objc_getproperty`/`objc_setproperty!` per class to install
+        # autoproperty branches; without that, the chain walks straight to the
+        # parent via `objc_parent`, all the way up to `Object` where it falls
+        # back to `getfield`/`setfield!`.
+        Base.getproperty(object::$name, field::Symbol) =
+            $ObjectiveC.objc_getproperty($name, object, field)
+        Base.setproperty!(object::$name, field::Symbol, value::Any) =
+            $ObjectiveC.objc_setproperty!($name, object, field, value)
     end
 
     # add optional methods
@@ -366,15 +443,17 @@ macro objcwrapper(ex...)
         ex = quote
             $(ex.args...)
 
-            Base.:(==)(a::$instance, b::$instance) = pointer(a) == pointer(b)
-            Base.hash(obj::$instance, h::UInt) = hash(pointer(obj), h)
+            Base.:(==)(a::$name, b::$name) = pointer(a) == pointer(b)
+            Base.hash(obj::$name, h::UInt) = hash(pointer(obj), h)
         end
     end
 
     esc(ex)
 end
 
-Base.pointer(obj::Object) = obj.ptr
+# Use `getfield` to bypass any user-defined `getproperty` (e.g., from
+# `@objcproperties`) when accessing the pointer slot.
+Base.pointer(obj::Object) = getfield(obj, :ptr)
 
 # when passing a single object, we automatically convert it to an object pointer
 Base.unsafe_convert(T::Type{<:id}, obj::Object) = convert(T, pointer(obj))
@@ -391,9 +470,216 @@ Base.unsafe_convert(T::Type{<:id}, arr::idArray) =
     reinterpret(T, pointer(arr.ids))
 
 
+# `@objcdispatch f(arg::KindOf{T}, ...)::ret begin ... end`
+#
+# Emits:
+#   1. The canonical implementation on `KindOf{T}` (the macro body).
+#   2. A top-level method on `Object` that routes through `inherits_from`,
+#      so calling `f(::SomeSubclassOfT)` repacks into `KindOf{T}` and
+#      forwards. Because `inherits_from(::Type{Sub}, ::Type{T})` const-folds
+#      to `true` when both are known statically, the indirection compiles to
+#      a register move plus a direct call.
+"""
+    @objcdispatch f(arg::KindOf{T}, more...)::ret begin
+        # canonical body, may use `arg` as a typed `id{T}` via @objc
+    end
+
+Define a polymorphic Objective-C method on the class `T`. The canonical body
+runs on a [`KindOf{T}`](@ref) wrapper (modeled on ObjC's `__kindof T *`);
+ObjectiveC.jl additionally generates a top-level method that accepts any
+`Object` and routes through `inherits_from(typeof(obj), T)` — so `f(sub)`
+works for any subclass of `T`, with the dispatch resolved at compile time
+when `typeof(sub)` is known statically.
+
+Use this in place of `f(::T) = ...` whenever `T` has subclasses *and* you
+want `f` to dispatch over them. For methods on classes with no subclasses
+(the common case), write a regular Julia method on the concrete struct.
+
+Note that the canonical body sees `arg` typed as `KindOf{T}` — the concrete
+subclass is not visible. When you need `typeof(arg)` inside the body
+(e.g. to reconstruct the return wrapper), write a regular method on `::Object`
+with an explicit `inherits_from` guard instead.
+
+# Limitation: forwarder signatures must be distinct
+
+The auto-emitted `Object` forwarder erases `T` to `::Object`. If two
+`@objcdispatch` methods on the same generic function have the same name,
+arity, and types in the remaining argument slots, their forwarders will
+have identical signatures and silently overwrite one another. Disambiguate
+by typing the trailing arguments differently, or — when the colliding
+methods are semantically distinct — write a single manual method on
+`::Object` that branches on `inherits_from`.
+"""
+macro objcdispatch(ex)
+    # Accept `@objcdispatch @inline function ... end` style by unwrapping
+    # leading macro decorators (e.g. `@inline`, `@noinline`).
+    decorators = Any[]
+    while Meta.isexpr(ex, :macrocall)
+        # Drop the LineNumberNode in macrocalls (args[2])
+        push!(decorators, ex.args[1])
+        ex = ex.args[end]
+    end
+
+    Meta.isexpr(ex, :function) || Meta.isexpr(ex, :(=)) ||
+        wrappererror("@objcdispatch expects a function definition")
+
+    sig = ex.args[1]
+    body = ex.args[2]
+
+    # Peel off `f(...)::ret`
+    rettype = nothing
+    if Meta.isexpr(sig, :(::))
+        rettype = sig.args[2]
+        sig = sig.args[1]
+    end
+
+    # Peel off `where {T...}`
+    whereparams = Any[]
+    while Meta.isexpr(sig, :where)
+        append!(whereparams, sig.args[2:end])
+        sig = sig.args[1]
+    end
+
+    Meta.isexpr(sig, :call) || wrappererror("@objcdispatch expects a function-call signature")
+
+    fname = sig.args[1]
+    rawargs = sig.args[2:end]
+
+    # Separate kwargs (Expr(:parameters, ...)) from positional args.
+    kwparams = nothing
+    args = Any[]
+    for a in rawargs
+        if Meta.isexpr(a, :parameters)
+            kwparams = a
+        else
+            push!(args, a)
+        end
+    end
+    isempty(args) && wrappererror("@objcdispatch needs at least one positional argument typed `KindOf{T}`")
+
+    # Recognize `KindOf{T}` and any qualified form ending in `KindOf{T}`
+    # (e.g. `ObjectiveC.KindOf{T}`, `OC.KindOf{T}`).
+    function is_kindof_type(e)
+        Meta.isexpr(e, :curly) || return false
+        head = e.args[1]
+        head === :KindOf && return true
+        Meta.isexpr(head, :.) && head.args[2] === QuoteNode(:KindOf) && return true
+        return false
+    end
+
+    # Locate the `KindOf{T}` argument; remember the type parameter T.
+    iface_idx = nothing
+    iface_T = nothing
+    for (i, a) in enumerate(args)
+        if Meta.isexpr(a, :(::)) && is_kindof_type(a.args[2])
+            iface_idx = i
+            iface_T = a.args[2].args[2]
+            break
+        end
+    end
+    iface_idx === nothing &&
+        wrappererror("@objcdispatch needs one argument typed `KindOf{T}`")
+
+    function argname(a)
+        if Meta.isexpr(a, :(::))
+            length(a.args) == 1 && return gensym(:_)   # anonymous typed slot
+            return a.args[1]
+        end
+        a
+    end
+    fwd_args = Any[argname(a) for a in args]
+
+    # Build the obj-dispatcher signature by swapping `::KindOf{T}` for
+    # `::Object`. For anonymous typed slots (`::T`), restore the gensym name
+    # we synthesized in `fwd_args` so the forwarder body can reference it.
+    obj_args = map(enumerate(args)) do (i, a)
+        if i == iface_idx
+            :( $(fwd_args[i])::$ObjectiveC.Object )
+        elseif Meta.isexpr(a, :(::)) && length(a.args) == 1
+            :( $(fwd_args[i])::$(a.args[1]) )
+        else
+            a
+        end
+    end
+
+    # Reconstruct the canonical signature (with decorators, kwargs, where, ret).
+    function rebuild_sig(call_args)
+        new_sig = Expr(:call, fname, call_args...)
+        if kwparams !== nothing
+            insert!(new_sig.args, 2, kwparams)
+        end
+        for tp in whereparams
+            new_sig = Expr(:where, new_sig, tp)
+        end
+        rettype === nothing ? new_sig : Expr(:(::), new_sig, rettype)
+    end
+
+    canonical = Expr(:function, rebuild_sig(args), body)
+    # Apply decorators back (innermost first, since they were pushed outer-first).
+    for dec in reverse(decorators)
+        canonical = Expr(:macrocall, dec, LineNumberNode(0), canonical)
+    end
+
+    iface_arg_name = fwd_args[iface_idx]
+    wrapped = :( $ObjectiveC.KindOf{$iface_T}($iface_arg_name) )
+    fwd_call_args = copy(fwd_args)
+    fwd_call_args[iface_idx] = wrapped
+
+    fwd_call = Expr(:call, fname, fwd_call_args...)
+    # Forward kwargs by splat
+    if kwparams !== nothing
+        # call site: f(args...; kwargs...) — collect kw names from kwparams
+        kw_names = Any[]
+        for kw in kwparams.args
+            if Meta.isexpr(kw, :kw)
+                push!(kw_names, kw.args[1])
+            elseif Meta.isexpr(kw, :(::))
+                push!(kw_names, kw.args[1])
+            else
+                push!(kw_names, kw)
+            end
+        end
+        # build `f(args...; k1=k1, k2=k2)`
+        fwd_kwparams = Expr(:parameters, [Expr(:kw, n isa Symbol ? n : n.args[1],
+                                                n isa Symbol ? n : n.args[1]) for n in kw_names]...)
+        insert!(fwd_call.args, 2, fwd_kwparams)
+    end
+
+    obj_body = quote
+        $ObjectiveC.inherits_from(typeof($iface_arg_name), $iface_T) ||
+            throw(MethodError($fname, ($(fwd_args...),)))
+        $fwd_call
+    end
+
+    obj_fn = Expr(:function, rebuild_sig(obj_args), obj_body)
+    # Reuse decorators on the dispatcher too (e.g., @inline forwarder)
+    for dec in reverse(decorators)
+        obj_fn = Expr(:macrocall, dec, LineNumberNode(0), obj_fn)
+    end
+
+    esc(quote
+        Core.@__doc__ $canonical
+        $obj_fn
+    end)
+end
+
+
 # Property Accesors
 
-objc_propertynames(obj::Type{<:Object}) = Symbol[]
+objc_propertynames(::Type{<:Object}) = Symbol[]
+objc_propertynames(::Nothing) = Symbol[]
+
+# Generic property accessors used by `@objcproperties`-generated dispatch.
+# When a class has no override, walk the Objective-C parent chain. The chain
+# bottoms out at `nothing` (the sentinel returned by `objc_parent(::Type{Object})`),
+# at which point we fall back to the default `getfield`/`setfield!`.
+@inline objc_getproperty(::Nothing, obj, field::Symbol) = getfield(obj, field)
+@inline objc_getproperty(::Type{T}, obj, field::Symbol) where {T<:Object} =
+    objc_getproperty(objc_parent(T), obj, field)
+@inline objc_setproperty!(::Nothing, obj, field::Symbol, value) =
+    setfield!(obj, field, value)
+@inline objc_setproperty!(::Type{T}, obj, field::Symbol, value) where {T<:Object} =
+    objc_setproperty!(objc_parent(T), obj, field, value)
 
 propertyerror(s::String) = error("""Objective-C property declaration: $s.
                                     Refer to the @objcproperties docstring for more details.""")
@@ -575,8 +861,9 @@ macro objcproperties(typ, ex)
     propertynames_ex = quote
         function $ObjectiveC.objc_propertynames(::Type{$(esc(typ))})
             properties = [$(map(QuoteNode, collect(propertynames))...)]
-            if supertype($(esc(typ))) != Any
-                properties = union(properties, $ObjectiveC.objc_propertynames(supertype($(esc(typ)))))
+            parent = $ObjectiveC.objc_parent($(esc(typ)))
+            if parent !== nothing
+                properties = union(properties, $ObjectiveC.objc_propertynames(parent))
             end
             return properties
         end
@@ -585,7 +872,17 @@ macro objcproperties(typ, ex)
         end
     end
 
-    # generate `Base.getproperty` definition, if needed
+    # generate `Base.getproperty` / `objc_getproperty` definitions.
+    # We define `objc_getproperty(::Type{T}, obj, field)` rather than
+    # `Base.getproperty` directly, so the ObjC parent chain can be walked at
+    # runtime via `objc_parent` (replacing the old `invoke(getproperty,
+    # supertype(T), ...)` chain). The wrapper `Base.getproperty(obj::T, field) =
+    # objc_getproperty(T, obj, field)` is the user-facing entry. Julia
+    # specializes `objc_getproperty` per concrete `obj` type at the call site
+    # so type-stability is preserved through the chain.
+    #
+    # `obj` is intentionally left untyped — the same method must also serve
+    # `KindOf{T}` wrappers, which are not `<:Object`.
     getproperties_ex = quote end
     if !isempty(read_properties)
         current = nothing
@@ -601,20 +898,18 @@ macro objcproperties(typ, ex)
             end
         end
 
-        # finally, call our parent's `getproperty`
-        final = :(@inline invoke(getproperty,
-                                 Tuple{supertype($(esc(typ))), Symbol},
-                                 object, field))
+        # fall through to the ObjC parent chain
+        final = :(return $ObjectiveC.objc_getproperty(
+                    $ObjectiveC.objc_parent($(esc(typ))), object, field))
         push!(current.args, final)
         getproperties_ex = quote
-            # XXX: force const-prop on field, without inlining everything?
-            function Base.getproperty(object::$(esc(typ)), field::Symbol)
+            function $ObjectiveC.objc_getproperty(::Type{$(esc(typ))}, object, field::Symbol)
                 $getproperties_ex
             end
         end
     end
 
-    # generate `Base.setproperty!` definition, if needed
+    # generate `Base.setproperty!` / `objc_setproperty!` definitions
     setproperties_ex = quote end
     if !isempty(write_properties)
         current = nothing
@@ -630,14 +925,13 @@ macro objcproperties(typ, ex)
             end
         end
 
-        # finally, call our parent's `setproperty!`
-        final = :(@inline invoke(setproperty!,
-                                 Tuple{supertype($(esc(typ))), Symbol, Any},
-                                 object, field, value))
+        # fall through to the ObjC parent chain
+        final = :(return $ObjectiveC.objc_setproperty!(
+                    $ObjectiveC.objc_parent($(esc(typ))), object, field, value))
         push!(current.args, final)
         setproperties_ex = quote
-            # XXX: force const-prop on field, without inlining everything?
-            function Base.setproperty!(object::$(esc(typ)), field::Symbol, value::Any)
+            function $ObjectiveC.objc_setproperty!(::Type{$(esc(typ))}, object,
+                                                    field::Symbol, value::Any)
                 $setproperties_ex
             end
         end
