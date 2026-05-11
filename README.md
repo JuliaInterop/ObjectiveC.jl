@@ -58,16 +58,19 @@ Ptr{Nothing} @0x0000000000000000
 
 ## Type model
 
-Every `@objcwrapper` declaration produces a concrete struct that subtypes the abstract
-`Object` directly, even given chains like `@objcwrapper Foo <: Bar`. Julia's `<:` therefore
-only sees `Foo <: Object`, *not* `Foo <: Bar`. The Objective-C class hierarchy is recorded
-separately as a trait (`objc_parent` / `inherits_from`) that the package walks at compile
-time. Keeping every wrapper concrete avoids the boxing and inference penalties of abstract
-fields, e.g., `Vector{NSString}` is alloc-free, and inference sees a single fixed type
-through container access.
+Every `@objcwrapper Foo <: Bar` declaration produces **two** parallel definitions:
 
-There are two patterns for writing methods, picked by what kind of polymorphism the method
-needs:
+  * a concrete `struct Foo <: Object` holding `ptr::id{Foo}`, used for storage and
+    value identity; and
+  * an abstract `FooKind <: BarKind` (defaulting to `<: ObjectKind`), used for
+    dispatch.
+
+The concrete struct chain stays flat: every wrapper is `<: Object` directly, regardless of
+its ObjC parent, so that `Vector{NSString}` is alloc-free and inference sees a single fixed
+type through container access. The Kind lattice mirrors the ObjC class hierarchy and is
+walked by Julia's native multiple dispatch for polymorphic methods.
+
+There are two patterns for writing methods:
 
 **Method on a single class.** Almost everything. Write a normal Julia method against the
 concrete struct:
@@ -84,19 +87,14 @@ same logic applies to Apple framework subclasses you simply haven't wrapped: the
 through as the nearest ancestor you *did* wrap.
 
 **Method polymorphic over a class and its subclasses.** When you've reconstructed part of
-the ObjC class hierarchy on the Julia side, i.e. written `@objcwrapper Sub <: Parent`,
-and want a method declared on `Parent` to dispatch for `Sub` as well, use `@objcdispatch`
-with a `KindOf{T}` argument. `@objcdispatch` has two modes: closed-world (the default)
-and open-world, picked by the dispatch boundary the method has to honour.
-
-*Closed-world* (`@objcdispatch f(...)`) is the right choice when the set of subclasses is
-**fully known to the macro at expansion time**, typically because every `@objcwrapper Sub
-<: Parent` lives in the same module above the method. At expansion the macro substitutes
-`KindOf{T}` with `Union{T, descendants(T)...}`, where descendants come from walking the
-`objc_parent` method table. The result is a regular Julia method on a concrete Union,
-dispatched natively:
+the ObjC class hierarchy on the Julia side, i.e. written `@objcwrapper Sub <: Parent`, and
+want a method declared on `Parent` to dispatch for `Sub` as well, use `@objcdispatch` with a
+`KindOf{T}` argument:
 
 ```julia
+@objcdispatch release(obj::KindOf{NSObject}) =
+    @objc [obj::id{NSObject} release]::Cvoid
+
 @objcdispatch endEncoding!(ce::KindOf{MTLCommandEncoder}) =
     @objc [ce::id{MTLCommandEncoder} endEncoding]::Nothing
 
@@ -107,28 +105,10 @@ dispatched natively:
 end
 ```
 
-*Open-world* (`@objcdispatch open=true f(...)`) is the right choice when the method should
-remain available to wrappers declared by **other modules or packages**, e.g., `retain`,
-`release`, `==`, and other foundation primitives are the canonical examples. In this case,
-the macro substitutes `KindOf{T}` with the abstract apex `Object` (so any wrapper matches
-dispatch) and prepends a runtime guard `inherits_from(typeof(arg), T) ||
-throw(MethodError(f, ...))` to the method body:
-
-```julia
-@objcdispatch open=true release(obj::KindOf{NSObject}) =
-    @objc [obj::id{NSObject} release]::Cvoid
-```
-
-Only one `open=true` definition is supported per function name. Because each `open=true`
-method rewrites its `KindOf{T}` slot to `::Object`, a second one on the same function would
-collide at `f(::Object, …)` and silently clobber the first. This is intentional: the
-canonical pattern is a single open-world root (every NSObject primitive has exactly one),
-and class-specific specialization should be a plain (closed-world) method on the concrete
-subclass, whose signature is strictly more specific than `::Object` so Julia's dispatch will
-prefer it.
-
-Rule of thumb: **closed-world when the dispatch set is owned by one module; open-world
-when the method should outlive any one package's view of the hierarchy.**
+For each `KindOf{T}` argument, `@objcdispatch` emits a body method dispatched on the Kind
+lattice and forwards calls with `Object` arguments to it. When the argument's static type is
+known at the call site (the common case), the entry-then-body chain folds at compile time to
+a direct call; the trait dispatch is zero-cost.
 
 
 ## Properties

@@ -33,14 +33,13 @@ export NSObject, retain, release, autorelease, is_kind_of
     @autoproperty retainCount::NSUInteger
 end
 
-# Methods defined by ObjC on NSObject. We use `@objcdispatch open=true` so
-# the dispatch is open to any wrapper a downstream package declares (Metal,
-# MPS, user code) without requiring re-declaration: the macro dispatches on
-# `::Object` and emits a runtime `inherits_from(typeof(obj), NSObject)`
-# guard, so a non-NSObject `Object` subtype gets a clear `MethodError`
-# rather than an obscure `convert(id{NSObject}, …)` failure.
-@objcdispatch open=true function Base.show(io::IO, ::MIME"text/plain",
-                                            obj::KindOf{NSObject})
+# Methods defined by ObjC on NSObject. `@objcdispatch` dispatches through
+# the Kind lattice, so downstream wrappers (Metal, MPS, user code) automatically
+# participate without re-declaration: `classkind(typeof(obj)) <: NSObjectKind`
+# routes through the trait-dispatched body, while a non-NSObject `Object`
+# subtype hits a clean `MethodError` on the body method.
+@objcdispatch function Base.show(io::IO, ::MIME"text/plain",
+                                 obj::KindOf{NSObject})
     if get(io, :compact, false)
         print(io, String(obj.description))
     else
@@ -48,23 +47,23 @@ end
     end
 end
 
-@objcdispatch open=true release(obj::KindOf{NSObject}) =
+@objcdispatch release(obj::KindOf{NSObject}) =
     @objc [obj::id{NSObject} release]::Cvoid
 
-@objcdispatch open=true autorelease(obj::KindOf{NSObject}) =
+@objcdispatch autorelease(obj::KindOf{NSObject}) =
     @objc [obj::id{NSObject} autorelease]::Cvoid
 
-@objcdispatch open=true retain(obj::KindOf{NSObject}) =
+@objcdispatch retain(obj::KindOf{NSObject}) =
     @objc [obj::id{NSObject} retain]::Cvoid
 
-@objcdispatch open=true function is_kind_of(obj::KindOf{NSObject}, class::Class)
+@objcdispatch function is_kind_of(obj::KindOf{NSObject}, class::Class)
     @objc [obj::id{NSObject} isKindOfClass:class::Class]::Bool
 end
 
 # Default equality for ObjC objects via `isEqual:`. Specific classes can
 # override this for a faster path (NSString, NSURL, etc. already do).
-@objcdispatch open=true function Base.:(==)(obj1::KindOf{NSObject},
-                                             obj2::KindOf{NSObject})
+@objcdispatch function Base.:(==)(obj1::KindOf{NSObject},
+                                  obj2::KindOf{NSObject})
     @objc [obj1::id{NSObject} isEqual:obj2::id{NSObject}]::Bool
 end
 

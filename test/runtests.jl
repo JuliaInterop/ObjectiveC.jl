@@ -288,23 +288,39 @@ end
     end
 end
 
+# `@objcdispatch` methods declared at top level: they should dispatch on
+# subclasses declared later, even from outside the current testset.
+@objcdispatch open_len_kind(s::KindOf{TestNSString})::Int =
+    Int(@objc [s::id{TestNSString} length]::Culong)
+@objcdispatch open_pair(a::KindOf{TestNSString}, b::KindOf{TestNSOperationQueue}) =
+    (typeof(a), typeof(b))
+# Subclass declared *after* the methods above — Kind-lattice dispatch
+# means it just works, with no warning, no registry, and no Union to
+# refreeze.
+@objcwrapper TestLateSub <: TestNSString
+
 @testset "inheritance / @objcdispatch" begin
     # The existing @objcproperties fixture gives us a two-level hierarchy:
     #   TestNSMutableString <: TestNSString <: Object
     # plus a sibling TestNSOperationQueue <: Object.
 
-    # inherits_from: walks the parent chain
+    # inherits_from: walks the Kind lattice
     @test inherits_from(TestNSString, TestNSString)
     @test inherits_from(TestNSMutableString, TestNSString)
     @test inherits_from(TestNSMutableString, Object)
     @test !inherits_from(TestNSString, TestNSMutableString)
     @test !inherits_from(TestNSOperationQueue, TestNSString)
     @test !inherits_from(TestNSString, TestNSOperationQueue)
-    # non-Object types short-circuit
+    # non-Object types fall through to `classkind = Nothing`
     @test !inherits_from(Int, TestNSString)
     @test !inherits_from(TestNSString, Int)
 
-    # id{Sub} ↔ id{Parent} conversion follows inherits_from
+    # the Kind lattice mirrors the ObjC parent chain
+    @test classkind(TestNSMutableString) <: classkind(TestNSString)
+    @test classkind(TestNSString) <: classkind(Object)
+    @test !(classkind(TestNSOperationQueue) <: classkind(TestNSString))
+
+    # id{Sub} ↔ id{Parent} conversion follows the Kind lattice
     raw = @objc [NSMutableString stringWithUTF8String:"abcd"::Ptr{UInt8}]::id{TestNSMutableString}
     @test raw isa id{TestNSMutableString}
     @test convert(id{TestNSString}, raw) isa id{TestNSString}
@@ -315,32 +331,28 @@ end
     @test_throws ArgumentError convert(id{TestNSMutableString}, parent_ptr)
     @test reinterpret(id{TestNSMutableString}, parent_ptr) isa id{TestNSMutableString}
 
-    # objc_subtree enumerates parent + descendants via the objc_parent method table
-    sub = ObjectiveC.objc_subtree(TestNSString)
-    @test TestNSString in sub
-    @test TestNSMutableString in sub
-    @test !(TestNSOperationQueue in sub)
-    @test ObjectiveC.objc_subtree(TestNSMutableString) == [TestNSMutableString]
-
-    # @objcdispatch expands KindOf{Parent} into Union{Parent, descendants...}
-    @objcdispatch testlen(s::KindOf{TestNSString})::Int =
-        Int(@objc [s::id{TestNSString} length]::Culong)
-
     mut = TestNSMutableString(raw)
     str = TestNSString(@objc [NSString stringWithUTF8String:"xyz"::Ptr{UInt8}]::id{TestNSString})
-    @test testlen(mut) == 4   # subclass dispatch
-    @test testlen(str) == 3   # exact-type dispatch
-
-    # non-conforming Object → MethodError (Julia's normal Union dispatch)
     queue = TestNSOperationQueue(@objc [NSOperationQueue new]::id{TestNSOperationQueue})
-    @test_throws MethodError testlen(queue)
+
+    # @objcdispatch dispatches on the Kind lattice — parent and every
+    # subclass route to the same body.
+    @test open_len_kind(mut) == 4    # subclass
+    @test open_len_kind(str) == 3    # exact type
+    # …including subclasses declared *after* the @objcdispatch site.
+    late = TestLateSub(@objc [NSString stringWithUTF8String:"xyz"::Ptr{UInt8}]::id{TestLateSub})
+    @test open_len_kind(late) == 3
+
+    # non-conforming class → MethodError on the body method.
+    @test_throws MethodError open_len_kind(queue)
 
     # qualified `KindOf{T}` is recognized by @objcdispatch
     @objcdispatch testlen_qualified(s::ObjectiveC.KindOf{TestNSString})::Int =
         Int(@objc [s::id{TestNSString} length]::Culong)
     @test testlen_qualified(mut) == 4
 
-    # the body sees the concrete subclass (no wrapper to erase it)
+    # the body sees the concrete subclass — `typeof(x)` resolves through
+    # the entry forwarder.
     @objcdispatch concretetype(s::KindOf{TestNSString}) = typeof(s)
     @test concretetype(mut) === TestNSMutableString
     @test concretetype(str) === TestNSString
@@ -349,22 +361,18 @@ end
     @test mut.length == 4
     @test unsafe_string(mut.UTF8String) == "abcd"
 
-    # late-subclass warning: declaring a subclass after `@objcdispatch` warns
-    @test_warn r"declared after `@objcdispatch testlen" begin
-        @eval @objcwrapper TestLateSub <: TestNSString
-    end
-
-    # multiple `KindOf{T}` slots are all substituted (issue: previously only
-    # the first slot was rewritten, leaving the rest as the empty marker).
+    # multiple `KindOf{T}` slots: every slot is independently lowered into
+    # trait dispatch.
     @objcdispatch pair_same(a::KindOf{TestNSString}, b::KindOf{TestNSString}) =
         (typeof(a), typeof(b))
     @test pair_same(mut, str) === (TestNSMutableString, TestNSString)
     @test pair_same(str, mut) === (TestNSString, TestNSMutableString)
 
-    # different `KindOf{T}` parents in a single signature
-    @objcdispatch pair_mixed(a::KindOf{TestNSString}, b::KindOf{TestNSOperationQueue}) =
-        (typeof(a), typeof(b))
-    @test pair_mixed(mut, queue) === (TestNSMutableString, TestNSOperationQueue)
+    # different `KindOf{T}` parents in a single signature — also covers
+    # the cross-hierarchy method created at top level above (open_pair).
+    @test open_pair(mut, queue) === (TestNSMutableString, TestNSOperationQueue)
+    @test_throws MethodError open_pair(queue, queue)
+    @test_throws MethodError open_pair(mut, mut)
 
     # other positional args may be anonymous-typed (`::SomeType`) — that's
     # a one-element `::` expression and must not be confused for a KindOf
@@ -373,66 +381,15 @@ end
         (typeof(s), T)
     @test with_anon(mut, Int32) === (TestNSMutableString, Int32)
 
-    # `KindOf{T}` with an abstract T (e.g. `Object`) collapses to `T` because
-    # every wrapper is already `<: T` in Julia's type system. The dispatch
-    # site should not be registered, so subsequent `@objcwrapper`s don't
-    # warn that the Union is stale (it never was a Union).
+    # `KindOf{Object}` matches any wrapper (every classkind <: ObjectKind),
+    # and a subclass declared afterwards also routes through it.
     @objcdispatch anyobj(x::KindOf{Object}) = typeof(x)
-    @test !haskey(ObjectiveC.objcdispatch_sites, Object)
-    @test_nowarn @eval @objcwrapper TestNSAnyObjSub <: Object
     @test anyobj(mut) === TestNSMutableString
+    @test anyobj(queue) === TestNSOperationQueue
+    @test_nowarn @eval @objcwrapper TestNSAnyObjSub <: Object
 
-end
-
-# `@objcdispatch open=true` at top level: dispatches on `::Object` with a
-# runtime `inherits_from` guard, so methods remain open to wrappers declared
-# later (e.g. in another package) without re-declaration.
-@objcdispatch open=true open_len_kind(s::KindOf{TestNSString})::Int =
-    Int(@objc [s::id{TestNSString} length]::Culong)
-@objcdispatch open=true open_pair(a::KindOf{TestNSString}, b::KindOf{TestNSOperationQueue}) =
-    (typeof(a), typeof(b))
-# Declaring `TestOpenLateSub <: TestNSString` is intentionally "late" — the
-# `inheritance / @objcdispatch` testset above registered six closed-world
-# dispatch sites on `TestNSString` (testlen, testlen_qualified, concretetype,
-# pair_same, pair_mixed, with_anon), and we want to verify that open=true
-# methods still dispatch on this subclass. The six expected late-subclass
-# warnings are captured here so they don't leak as noise in the test output.
-@test_logs((:warn, r"@objcdispatch testlen\("),
-           (:warn, r"@objcdispatch testlen_qualified\("),
-           (:warn, r"@objcdispatch concretetype\("),
-           (:warn, r"@objcdispatch pair_same\("),
-           (:warn, r"@objcdispatch pair_mixed\("),
-           (:warn, r"@objcdispatch with_anon\("),
-           @eval @objcwrapper TestOpenLateSub <: TestNSString)
-# Isolated parent for the "no-warning" assertion: other tests register
-# closed-world dispatch sites on `TestNSString`, so we need a fresh class.
-@objcwrapper TestOpenRoot <: Object
-@objcdispatch open=true open_root_id(x::KindOf{TestOpenRoot}) = typeof(x)
-@testset "@objcdispatch open=true" begin
-    str1 = "foo"
-    str = TestNSString(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestNSString})
-    mut = TestNSMutableString(@objc [NSMutableString stringWithUTF8String:"abcd"::Ptr{UInt8}]::id{TestNSMutableString})
-    queue = TestNSOperationQueue(@objc [NSOperationQueue new]::id{TestNSOperationQueue})
-
-    # Open dispatch handles the parent and its descendants.
-    @test open_len_kind(mut) == 4
-    @test open_len_kind(str) == 3
-    # …including wrappers declared *after* the method.
-    late_obj = TestOpenLateSub(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestOpenLateSub})
-    @test open_len_kind(late_obj) == 3
-    # MethodError when the runtime class doesn't inherit from the
-    # declared `KindOf` parent.
-    @test_throws MethodError open_len_kind(queue)
-
-    # No call-site registration → no late-subclass warning. Verified on an
-    # isolated parent (`TestOpenRoot`) with no closed-world dispatch sites.
-    @test !haskey(ObjectiveC.objcdispatch_sites, TestOpenRoot)
-    @test_nowarn @eval @objcwrapper TestOpenRootSub <: TestOpenRoot
-
-    # Multi-arg `open=true`: every `KindOf{T}` slot gets its own guard.
-    @test open_pair(mut, queue) === (TestNSMutableString, TestNSOperationQueue)
-    @test_throws MethodError open_pair(queue, queue)
-    @test_throws MethodError open_pair(mut, mut)
+    # The legacy `open=true` keyword should now error.
+    @test_throws LoadError @eval @objcdispatch open=true bad_open(x::KindOf{TestNSString}) = nothing
 end
 
 using .Foundation
