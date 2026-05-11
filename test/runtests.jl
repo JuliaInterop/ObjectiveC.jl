@@ -391,7 +391,19 @@ end
     Int(@objc [s::id{TestNSString} length]::Culong)
 @objcdispatch open=true open_pair(a::KindOf{TestNSString}, b::KindOf{TestNSOperationQueue}) =
     (typeof(a), typeof(b))
-@objcwrapper TestOpenLateSub <: TestNSString
+# Declaring `TestOpenLateSub <: TestNSString` is intentionally "late" — the
+# `inheritance / @objcdispatch` testset above registered six closed-world
+# dispatch sites on `TestNSString` (testlen, testlen_qualified, concretetype,
+# pair_same, pair_mixed, with_anon), and we want to verify that open=true
+# methods still dispatch on this subclass. The six expected late-subclass
+# warnings are captured here so they don't leak as noise in the test output.
+@test_logs((:warn, r"@objcdispatch testlen\("),
+           (:warn, r"@objcdispatch testlen_qualified\("),
+           (:warn, r"@objcdispatch concretetype\("),
+           (:warn, r"@objcdispatch pair_same\("),
+           (:warn, r"@objcdispatch pair_mixed\("),
+           (:warn, r"@objcdispatch with_anon\("),
+           @eval @objcwrapper TestOpenLateSub <: TestNSString)
 # Isolated parent for the "no-warning" assertion: other tests register
 # closed-world dispatch sites on `TestNSString`, so we need a fresh class.
 @objcwrapper TestOpenRoot <: Object
