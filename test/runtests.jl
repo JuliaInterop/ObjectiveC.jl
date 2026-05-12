@@ -136,6 +136,18 @@ end
     @test_throws UndefRefError TestNSString(nil)
 end
 
+# `@objcwrapper Foo` (no explicit parent) must work from a module that hasn't
+# brought `Object` into scope; the default super has to be fully qualified.
+module NoObjectImport
+    import ..ObjectiveC
+    import ..ObjectiveC: @objcwrapper
+    @objcwrapper NoImportWrapper
+end
+@testset "@objcwrapper default super qualified" begin
+    @test supertype(NoObjectImport.NoImportWrapper) === ObjectiveC.Object
+    @test ObjectiveC.objc_parent(NoObjectImport.NoImportWrapper) === ObjectiveC.Object
+end
+
 @objcproperties TestNSString begin
     @autoproperty length::Culong
     @static if true
@@ -155,6 +167,9 @@ end
 @objcproperties TestNSOperationQueue begin
     @autoproperty name::id{TestNSString} setter=setName
 end
+# bare subclass: no `@objcproperties` of its own, used to verify that
+# `propertynames` inherits the parent's property list.
+@objcwrapper TestNSStringBareSub <: TestNSString
 @testset "@objcproperties" begin
     # immutable object with only read properties
     str1 = "foo"
@@ -189,6 +204,20 @@ end
     @test unsafe_string(queue.name.UTF8String) != str1
     queue.name = immut
     @test unsafe_string(queue.name.UTF8String) == str1
+
+    # subclass without its own @objcproperties block still surfaces the
+    # parent's properties via propertynames.
+    bare = TestNSStringBareSub(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestNSStringBareSub})
+    @test :length in propertynames(bare)
+    @test :UTF8String in propertynames(bare)
+    @test bare.length == length(str1)
+
+    # Const-prop on literal property access: `obj.length` must infer the
+    # exact return type, not the Union of every property in the ancestor
+    # chain. Regression guard for the `@inline objc_getproperty` cascade.
+    get_len(s) = s.length
+    @test Base.return_types(get_len, (TestNSString,))[1] === Culong
+    @test Base.return_types(get_len, (TestNSStringBareSub,))[1] === Culong
 end
 
 @testset "@objc blocks" begin
@@ -257,6 +286,123 @@ end
             val[] == 1 || error("val[] = $(val[])")
         end()
     end
+end
+
+# `@objcmethod` methods declared at top level: they should dispatch on
+# subclasses declared later, even from outside the current testset.
+@objcmethod open_len_kind(s::KindOf{TestNSString})::Int =
+    Int(@objc [s::id{TestNSString} length]::Culong)
+@objcmethod open_pair(a::KindOf{TestNSString}, b::KindOf{TestNSOperationQueue}) =
+    (typeof(a), typeof(b))
+# Subclass declared *after* the methods above — Kind-lattice dispatch
+# means it just works, with no warning, no registry, and no Union to
+# refreeze.
+@objcwrapper TestLateSub <: TestNSString
+
+@testset "inheritance / @objcmethod" begin
+    # The existing @objcproperties fixture gives us a two-level hierarchy:
+    #   TestNSMutableString <: TestNSString <: Object
+    # plus a sibling TestNSOperationQueue <: Object.
+
+    # ObjectiveC.inherits_from: walks the Kind lattice
+    @test ObjectiveC.inherits_from(TestNSString, TestNSString)
+    @test ObjectiveC.inherits_from(TestNSMutableString, TestNSString)
+    @test ObjectiveC.inherits_from(TestNSMutableString, Object)
+    @test !ObjectiveC.inherits_from(TestNSString, TestNSMutableString)
+    @test !ObjectiveC.inherits_from(TestNSOperationQueue, TestNSString)
+    @test !ObjectiveC.inherits_from(TestNSString, TestNSOperationQueue)
+    # non-Object types fall through to `classkind = Nothing`
+    @test !ObjectiveC.inherits_from(Int, TestNSString)
+    @test !ObjectiveC.inherits_from(TestNSString, Int)
+
+    # the Kind lattice mirrors the ObjC parent chain
+    @test ObjectiveC.classkind(TestNSMutableString) <: ObjectiveC.classkind(TestNSString)
+    @test ObjectiveC.classkind(TestNSString) <: ObjectiveC.classkind(Object)
+    @test !(ObjectiveC.classkind(TestNSOperationQueue) <: ObjectiveC.classkind(TestNSString))
+
+    # id{Sub} ↔ id{Parent} conversion follows the Kind lattice
+    raw = @objc [NSMutableString stringWithUTF8String:"abcd"::Ptr{UInt8}]::id{TestNSMutableString}
+    @test raw isa id{TestNSMutableString}
+    @test convert(id{TestNSString}, raw) isa id{TestNSString}
+    @test convert(id{Object}, raw) isa id{Object}
+    @test_throws ArgumentError convert(id{TestNSOperationQueue}, raw)
+    # downcast is allowed through reinterpret only
+    parent_ptr = convert(id{TestNSString}, raw)
+    @test_throws ArgumentError convert(id{TestNSMutableString}, parent_ptr)
+    @test reinterpret(id{TestNSMutableString}, parent_ptr) isa id{TestNSMutableString}
+
+    mut = TestNSMutableString(raw)
+    str = TestNSString(@objc [NSString stringWithUTF8String:"xyz"::Ptr{UInt8}]::id{TestNSString})
+    queue = TestNSOperationQueue(@objc [NSOperationQueue new]::id{TestNSOperationQueue})
+
+    # @objcmethod dispatches on the Kind lattice — parent and every
+    # subclass route to the same body.
+    @test open_len_kind(mut) == 4    # subclass
+    @test open_len_kind(str) == 3    # exact type
+    # …including subclasses declared *after* the @objcmethod site.
+    late = TestLateSub(@objc [NSString stringWithUTF8String:"xyz"::Ptr{UInt8}]::id{TestLateSub})
+    @test open_len_kind(late) == 3
+
+    # non-conforming class → MethodError on the body method.
+    @test_throws MethodError open_len_kind(queue)
+
+    # qualified `KindOf{T}` is recognized by @objcmethod
+    @objcmethod testlen_qualified(s::ObjectiveC.KindOf{TestNSString})::Int =
+        Int(@objc [s::id{TestNSString} length]::Culong)
+    @test testlen_qualified(mut) == 4
+
+    # the body sees the concrete subclass — `typeof(x)` resolves through
+    # the entry forwarder.
+    @objcmethod concretetype(s::KindOf{TestNSString}) = typeof(s)
+    @test concretetype(mut) === TestNSMutableString
+    @test concretetype(str) === TestNSString
+
+    # property access works natively — no wrapper involved
+    @test mut.length == 4
+    @test unsafe_string(mut.UTF8String) == "abcd"
+
+    # multiple `KindOf{T}` slots: every slot is independently lowered into
+    # trait dispatch.
+    @objcmethod pair_same(a::KindOf{TestNSString}, b::KindOf{TestNSString}) =
+        (typeof(a), typeof(b))
+    @test pair_same(mut, str) === (TestNSMutableString, TestNSString)
+    @test pair_same(str, mut) === (TestNSString, TestNSMutableString)
+
+    # different `KindOf{T}` parents in a single signature — also covers
+    # the cross-hierarchy method created at top level above (open_pair).
+    @test open_pair(mut, queue) === (TestNSMutableString, TestNSOperationQueue)
+    @test_throws MethodError open_pair(queue, queue)
+    @test_throws MethodError open_pair(mut, mut)
+
+    # other positional args may be anonymous-typed (`::SomeType`) — that's
+    # a one-element `::` expression and must not be confused for a KindOf
+    # slot when locating substitutions.
+    @objcmethod with_anon(s::KindOf{TestNSString}, ::Type{T}) where {T<:Integer} =
+        (typeof(s), T)
+    @test with_anon(mut, Int32) === (TestNSMutableString, Int32)
+
+    # `KindOf{Object}` matches any wrapper (every classkind <: ObjectKind),
+    # and a subclass declared afterwards also routes through it.
+    @objcmethod anyobj(x::KindOf{Object}) = typeof(x)
+    @test anyobj(mut) === TestNSMutableString
+    @test anyobj(queue) === TestNSOperationQueue
+    @test_nowarn @eval @objcwrapper TestNSAnyObjSub <: Object
+
+    # The legacy `open=true` keyword should now error.
+    @test_throws LoadError @eval @objcmethod open=true bad_open(x::KindOf{TestNSString}) = nothing
+
+    # Regression: two `@objcmethod` overloads of the same *constructor*
+    # (i.e. `f` is a type, not a generic function) must not both emit the
+    # `(::Object)` entry forwarder. The dedup guard keys methods by
+    # `Type{T}` rather than `typeof(T) == DataType`, otherwise both
+    # overloads emit the entry and Julia 1.12 rejects the redefinition
+    # during precompilation. `@objcwrapper` is `@eval`d so the macro
+    # check runs after the type exists.
+    @eval @objcwrapper TestCtorTarget <: Object
+    @eval @objcmethod TestCtorTarget(x::KindOf{TestNSString}) =
+        TestCtorTarget(reinterpret($id{TestCtorTarget}, $pointer(x)))
+    @test_nowarn @eval @objcmethod TestCtorTarget(x::KindOf{TestNSOperationQueue}) =
+        TestCtorTarget(reinterpret($id{TestCtorTarget}, $pointer(x)))
 end
 
 using .Foundation

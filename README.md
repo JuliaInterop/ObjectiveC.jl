@@ -41,29 +41,93 @@ julia> obj_ptr = @objc [NSValue valueWithPointer:C_NULL::Ptr{Cvoid}]::id{NSValue
 id{NSValue}(0x00006000023cfca0)
 
 julia> obj = NSValue(obj_ptr)
-NSValueInstance (object of type NSConcreteValue)
+NSValue (object of type NSConcreteValue)
 ```
 
-The generated `NSValue` class is an abstract type that implements the type hierarchy, while
-the `NSValueInstance` object is a concrete structure that houses the `id` pointer. This
-split makes it possible to implement multi-level inheritance and attach functionality at
-each level of the hierarchy, and should be entirely transparent to the user (i.e., you
-should never need to use the `*Instance` types in code or signatures).
+`@objcwrapper` emits a concrete `struct NSValue <: Object` holding the `id` pointer. The
+macro also generates conversion routines so the wrapper can be passed directly to `@objc`
+calls expecting `id`.
 
-The `@objcwrapper` macro also generates conversion routines and accessors that makes it
-possible to use these objects directly with `@objc` calls that require `id` pointers:
+To declare a method on a wrapper class, use `@objcmethod` with a `KindOf{T}` argument
+marker:
 
 ```julia
-julia> get_pointer(val::NSValue) = @objc [val::id{NSValue} pointerValue]::Ptr{Cvoid}
+julia> @objcmethod get_pointer(val::KindOf{NSValue}) =
+           @objc [val::id{NSValue} pointerValue]::Ptr{Cvoid}
 
 julia> get_pointer(obj)
 Ptr{Nothing} @0x0000000000000000
 ```
 
+`KindOf{T}` in combination with `@objcmethod` makes the method polymorphic over `T` and any
+wrapped subclasses; important because wrappers do *not* form a Julia `<:` chain (every
+wrapper is `<: Object` directly), so a plain `f(val::NSValue, …)` would silently fail to
+dispatch on a subclass.
+
+
+## Type model
+
+Every `@objcwrapper Foo <: Bar` declaration produces **two** parallel definitions:
+
+* a concrete `struct Foo <: Object` holding `ptr::id{Foo}`, for storage and value identity;
+* an abstract `FooKind <: BarKind` (defaulting to `<: ObjectKind`), for dispatch purposes.
+
+The concrete struct chain stays flat: every wrapper is `<: Object` directly, regardless of
+its ObjC parent, so that `Vector{NSString}` is alloc-free and inference sees a single fixed
+type through container access. The Kind lattice mirrors the ObjC class hierarchy and is
+walked by Julia's native multiple dispatch for polymorphic methods.
+
+### Methods on wrapper classes
+
+**Recommendation: use `@objcmethod` with `KindOf{T}` for wrapper-typed parameters.** Because
+the concrete struct chain is flat, a plain `f(x::Parent, …)` is monomorphic and does *not*
+match a later `@objcwrapper Sub <: Parent`. To avoid this footgun, route every wrapper-typed
+argument through `@objcmethod` and mark it with `KindOf{T}`:
+
+```julia
+@objcmethod release(obj::KindOf{NSObject}) =
+    @objc [obj::id{NSObject} release]::Cvoid
+
+@objcmethod endEncoding!(ce::KindOf{MTLCommandEncoder}) =
+    @objc [ce::id{MTLCommandEncoder} endEncoding]::Nothing
+
+@objcmethod function Base.copy(kernel::KindOf{MPSKernel})
+    K = typeof(kernel)
+    obj = @objc [kernel::id{MPSKernel} copy]::id{MPSKernel}
+    K(reinterpret(id{K}, obj))
+end
+```
+
+For each `KindOf{T}` slot, `@objcmethod` emits a body method dispatched on the parallel
+Kind lattice and an entry forwarder on `::Object` that routes calls to it. When the
+argument's static type is known at the call site (the common case), the chain folds at
+compile time to a direct call; the trait dispatch is zero-cost.
+
+`KindOf{T}` is **macro-level syntax**, not a real Julia type. `@objcmethod` rewrites every
+`KindOf{T}` slot at macroexpand-time and the marker never reaches runtime, so it cannot
+appear in containers, fields, or return positions — `Vector{KindOf{T}}`, `id{KindOf{T}}`,
+and `f(…)::KindOf{T}` are all meaningless. The storage axis is unaffected by the choice
+of dispatch style: `Vector{NSString}` is still tightly packed, and the wrapper struct
+remains an immutable `isbits` value carrying a single `id` pointer regardless of whether
+methods on it use `@objcmethod`.
+
+**When to write a plain method instead.** Skipping `@objcmethod` is fine when:
+
+* The class is a true leaf with no `@objcwrapper` subclasses (e.g. `NSString`, where the
+  underlying `__NSCFString` / `NSTaggedPointerString` subclasses are *not* wrapped on the
+  Julia side and so `typeof(obj)` is always `NSString`). The ObjC runtime still
+  dispatches to the real concrete class via `objc_msgSend`, so a normal
+  `Base.length(s::NSString) = Int(s.length)` works correctly.
+* You genuinely want to refuse subclasses (rare in Objective-C, where messaging is
+  polymorphic by design).
+
+In all other cases, prefer `@objcmethod`: it costs only a runtime type check while
+protecting the method from breaking when a downstream `@objcwrapper Sub <: Parent` lands.
+
 
 ## Properties
 
-A common pattern in Objective-C is to use properties to acces instance variables. Although
+A common pattern in Objective-C is to use properties to access instance variables. Although
 it is possible to access these directly using `@objc`, ObjectiveC.jl provides a macro to
 automatically generate the appropriate `getproperty`, `setproperty!` and `propertynames`
 definitions:
