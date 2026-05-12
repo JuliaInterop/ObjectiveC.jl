@@ -2,43 +2,26 @@ export @objc, @objcwrapper, @objcproperties, @objcblock, @objcmethod
 export KindOf
 
 
-# Kind hierarchy: a parallel abstract-type lattice mirroring the ObjC class
-# graph, used purely for trait dispatch.
-#
-# Each `@objcwrapper Foo <: Bar` emits `abstract type FooKind <: BarKind end`
-# alongside the concrete `struct Foo <: Object`. The concrete types stay flat
-# (so `Vector{Foo}` is unboxed), while `classkind(::Type{Foo}) = FooKind`
-# lets `@objcmethod` dispatch through the Kind lattice via Julia's native
-# multiple dispatch. There's no registration, no late-subclass warning, and
-# no closed-vs-open distinction — Julia's type lattice does all the work.
-#
-# `ObjectKind` is the lattice root; non-ObjC types fall through to `Nothing`
-# so `inherits_from` returns false without a special case.
-abstract type ObjectKind end
-classkind(::Type) = Nothing
-classkind(::Type{Object}) = ObjectKind
+# `Object` is parameterized by its `Kind` (declared in primitives.jl), and
+# each `@objcwrapper Foo <: Bar` emits an abstract `FooKind <: BarKind` along
+# with `struct Foo <: Object{FooKind}`. `Object{<:FooKind}` is therefore a
+# *native Julia* constraint that matches Foo and every wrapped subclass, so
+# `@objcmethod`'s only job is to rewrite `KindOf{T}` slots to
+# `Object{<:classkind(T)}` and emit a plain method. No parallel trait
+# dispatch, no entry/body split, no bespoke `inherits_from` — Julia's `<:`
+# does all the work.
 
-inherits_from(T::Type, S::Type) = classkind(T) <: classkind(S)
-
-
-# `objc_parent` is kept for the `@objcproperties`-generated property dispatch
-# chain (which walks `objc_parent(T)` to inherit properties from ObjC
-# ancestors). The Kind lattice handles polymorphic *method* dispatch.
+# `objc_parent` walks the wrapper hierarchy for `@objcproperties`'s property
+# chain (which inherits ancestors' getters/setters). Kind-based dispatch in
+# `@objcmethod` doesn't use it.
 objc_parent(::Type{Object}) = nothing
 objc_parent(::Type{<:Object}) = nothing
 
 
-# `KindOf{T}` is a parse-time marker recognized by `@objcmethod` in
-# argument positions. The struct itself is never instantiated — the macro
-# rewrites each `KindOf{T}` slot into trait dispatch on `Type{<:classkind(T)}`.
-# Modeled on Objective-C's `__kindof T *` type qualifier.
+# `KindOf{T}` is a parse-time sentinel that `@objcmethod` rewrites to
+# `Object{<:classkind(T)}` in argument positions. Modeled on Objective-C's
+# `__kindof T *` qualifier. The struct itself is never instantiated.
 struct KindOf{T<:Object} end
-
-
-# Tie `id{U}` → `id{T}` conversions to the Kind lattice. Forward-declared in
-# primitives.jl.
-compatible_id_types(::Type{T}, ::Type{U}) where {T<:Object, U<:Object} =
-    classkind(U) <: classkind(T)
 
 
 # Method Calling
@@ -147,11 +130,17 @@ end
 
 # argument renderers, for tracing functionality
 render(io, obj) = Core.print(io, repr(obj))
+# `Object` is a UnionAll (`Object{K}`), so `id{Object}` has `T === Object` as a
+# UnionAll value without a `.name` slot. Strip to the underlying DataType where
+# possible, otherwise fall back to `nameof`.
+_type_short_name(T::DataType) = String(T.name.name)
+_type_short_name(T::UnionAll) = _type_short_name(Base.unwrap_unionall(T))
+_type_short_name(T) = string(nameof(T))
 function render(io, ptr::id{T}) where T
-    Core.print(io, "(id<", String(T.name.name), ">)0x", string(UInt(ptr), base=16, pad = Sys.WORD_SIZE>>2))
+    Core.print(io, "(id<", _type_short_name(T), ">)0x", string(UInt(ptr), base=16, pad = Sys.WORD_SIZE>>2))
 end
 function render(io, ptr::Ptr{T}) where T
-    Core.print(io, "(", String(T.name.name), "*)0x", string(UInt(ptr), base=16, pad = Sys.WORD_SIZE>>2))
+    Core.print(io, "(", _type_short_name(T), "*)0x", string(UInt(ptr), base=16, pad = Sys.WORD_SIZE>>2))
 end
 ## mimic ccall's conversion
 function render_c_arg(io, obj, typ)
@@ -305,16 +294,16 @@ wrappererror(msg) = error("""ObjectiveC wrapper: $msg
 
 Define a Julia struct that wraps an Objective-C object pointer.
 
-Each declaration generates a concrete `struct name <: Object` (or
-`mutable struct` when `immutable=false`) holding a single `ptr::id{name}` field.
-The Objective-C class hierarchy is recorded by emitting
-`objc_parent(::Type{name}) = super` (defaulting to `Object`), which the
-recursive `inherits_from` trait uses to model `<:`-style relationships at the
-ObjC layer without forcing a Julia abstract type for each non-leaf class.
+Each declaration generates an abstract `nameKind <: superKind` and a
+concrete `struct name <: Object{nameKind}` (or `mutable struct` when
+`immutable=false`) holding a single `ptr::id{name}` field. The Kind parameter
+on `Object` directly encodes the ObjC class hierarchy, so `Object{<:K}`
+matches the wrapper *and every wrapped subclass* via native Julia subtyping.
 
 Methods can be written directly on the concrete struct (e.g.
 `length(s::NSString) = ...`); polymorphic methods over an inheritance chain
-should be expressed via [`@objcmethod`](@ref).
+should be expressed via [`@objcmethod`](@ref), which rewrites
+`arg::KindOf{T}` slots to `arg::Object{<:classkind(T)}`.
 
 Keyword arguments:
 
@@ -367,10 +356,18 @@ macro objcwrapper(ex...)
         wrappererror()
     end
 
+    # The parallel `${name}Kind` lives *next to* the struct (rather than as a
+    # separate trait function): the struct's supertype embeds it directly via
+    # `Object{$kindname}`. The Kind type itself must be declared before the
+    # struct because the supertype clause references it; the super's Kind has
+    # to exist already (same ordering rule the old design imposed via
+    # `<:Object`).
+    kindname = Symbol(name, "Kind")
+
     # define the concrete struct. The constructor checks availability and rejects nil.
     structdef = if immutable
         quote
-            struct $name <: $ObjectiveC.Object
+            struct $name <: $ObjectiveC.Object{$kindname}
                 ptr::$ObjectiveC.id{$name}
                 function $name(ptr::$ObjectiveC.id)
                     @static if !$ObjectiveC.is_available($availability)
@@ -383,7 +380,7 @@ macro objcwrapper(ex...)
         end
     else
         quote
-            mutable struct $name <: $ObjectiveC.Object
+            mutable struct $name <: $ObjectiveC.Object{$kindname}
                 ptr::$ObjectiveC.id{$name}
                 function $name(ptr::$ObjectiveC.id)
                     @static if !$ObjectiveC.is_available($availability)
@@ -396,18 +393,16 @@ macro objcwrapper(ex...)
         end
     end
 
-    # Emit the parallel abstract `${name}Kind <: classkind(super)` for trait
-    # dispatch via `@objcmethod`. `classkind(super)` is resolved at the
-    # declaration site, so the super's Kind type must already exist (same
-    # ordering rule as the concrete struct's `<:Object`).
-    kindname = Symbol(name, "Kind")
-
     ex = quote
+        # Kind has to come *before* the struct definition so the supertype
+        # clause `Object{$kindname}` can resolve it.
+        abstract type $kindname <: $ObjectiveC.classkind($super) end
+
         $(structdef.args...)
 
-        # parallel Kind type, used by `@objcmethod` for subclass dispatch.
-        abstract type $kindname <: $ObjectiveC.classkind($super) end
-        $ObjectiveC.classkind(::Type{$name}) = $kindname
+        # `classkind(::Type{$name})` falls through to the generic
+        # `classkind(::Type{<:Object{K}})` method declared in syntax.jl; no
+        # per-class definition needed.
 
         # record the immediate ObjC parent for the property-dispatch chain.
         $ObjectiveC.objc_parent(::Type{$name}) = $super
@@ -466,27 +461,20 @@ Base.unsafe_convert(T::Type{<:id}, arr::idArray) =
 Define an Objective-C method polymorphic over `T` and every wrapped subclass
 of `T` (including subclasses declared in downstream modules).
 
-The macro lowers each `KindOf{T}` slot to trait dispatch on the parallel
-**Kind lattice** emitted by `@objcwrapper`. For a signature
-`f(x::KindOf{T}, more...)` it generates two methods:
+The macro rewrites each `arg::KindOf{T}` slot to `arg::Object{<:classkind(T)}`
+and emits a single plain Julia method. Because `Object` is parameterized by
+its Kind (see `primitives.jl`), `Object{<:K}` is a native Julia constraint
+that matches any wrapper whose ObjC class is a kind of `K` — so dispatch
+across sibling `@objcmethod` definitions follows ordinary Julia method
+specificity, with no entry/body split, no trait-dispatch plumbing, and no
+ambiguity surprises from `KindOf` widening to `::Object`.
 
-  * a body method `f(::Type{<:classkind(T)}, x, more...) = …`, dispatched
-    on the Kind of the actual argument's class;
-  * an entry forwarder `f(x::Object, more...) = f(classkind(typeof(x)), x, more...)`,
-    which is identical across all `@objcmethod` sites for the same `f`
-    (Julia will simply redefine it, harmlessly).
+Subclasses declared *later* (in this or any downstream module) automatically
+participate: their `SubKind <: ParentKind` slot into the Kind lattice, and
+`Object{<:ParentKind}` already accepts them.
 
-Multiple `KindOf{T}` slots are each lowered the same way; the trait
-dispatch args are prepended to the body in order. Subclasses declared
-*later* (in this or any downstream module) automatically participate
-because their `SubKind <: ParentKind` slots into the lattice that
-Julia's native dispatch already walks — there is no Union to freeze, no
-registration, and no late-subclass warning needed.
-
-`typeof(x)` inside the body returns the concrete wrapper (e.g.
-`MPSCommandBuffer`), since the entry forwarder leaves the argument's
-runtime type intact. When the argument's static type is known at the call
-site, the trait dispatch folds through both methods to a direct call.
+`@objcmethod` is mostly a documentation marker and a `KindOf{T}` resolver;
+its semantics are exactly those of writing the rewritten function by hand.
 """
 macro objcmethod(ex...)
     decl = ex[end]
@@ -515,10 +503,7 @@ macro objcmethod(ex...)
     catch err
         wrappererror("@objcmethod expects a function definition ($err)")
     end
-    args        = get(def, :args, Any[])::Vector
-    kwargs      = get(def, :kwargs, Any[])::Vector
-    whereparams = get(def, :whereparams, Any[])::Vector
-    fname       = def[:name]
+    args = get(def, :args, Any[])::Vector
     isempty(args) && wrappererror("@objcmethod needs at least one positional argument typed `KindOf{T}`")
 
     # Recognize `KindOf{T}` and any qualified form ending in `KindOf{T}`
@@ -531,139 +516,44 @@ macro objcmethod(ex...)
         return false
     end
 
-    # Locate every `KindOf{T}` slot (allowed forms: `x::KindOf{T}`,
-    # `::KindOf{T}`). Remember the type parameter for each.
-    kindof_slots = Tuple{Int, Any}[]
-    for (i, a) in enumerate(args)
-        Meta.isexpr(a, :(::)) || continue
-        typ = a.args[end]
-        is_kindof_type(typ) || continue
-        push!(kindof_slots, (i, typ.args[2]))
+    # Rewrite each `arg::KindOf{T}` slot in-place to `arg::Object{<:K}`,
+    # where `K = classkind(T)` is resolved at macroexpand time in the
+    # caller's module. The Kind only needs to be known *now* — the user
+    # already declared `T` (and thus its Kind) earlier in the module.
+    seen_kindof = false
+    rewritten_args = Any[]
+    for a in args
+        if Meta.isexpr(a, :(::)) && is_kindof_type(a.args[end])
+            T_expr = a.args[end].args[2]
+            T = try
+                Core.eval(__module__, T_expr)
+            catch err
+                wrappererror("@objcmethod could not resolve `$T_expr` \
+                              (must be a wrapped class declared earlier): $err")
+            end
+            T isa Type && T <: Object ||
+                wrappererror("@objcmethod type parameter `$T_expr` must \
+                              resolve to a subtype of `Object`, got $T")
+            K = classkind(T)
+            new_typ = :($ObjectiveC.Object{<:$K})
+            push!(rewritten_args, Expr(:(::), a.args[1:end-1]..., new_typ))
+            seen_kindof = true
+        else
+            push!(rewritten_args, a)
+        end
     end
-    isempty(kindof_slots) &&
+    seen_kindof ||
         wrappererror("@objcmethod needs at least one argument typed `KindOf{T}`")
 
-    # Name every positional arg (gensym anonymous ones) so the entry
-    # forwarder can pass them through to the body method.
-    arg_names = Symbol[]
-    for a in args
-        if Meta.isexpr(a, :(::))
-            push!(arg_names, length(a.args) == 2 ? a.args[1] : gensym(:_))
-        elseif a isa Symbol
-            push!(arg_names, a)
-        else
-            push!(arg_names, gensym(:_))
-        end
-    end
-
-    # Sanity-check each KindOf{T}: T must resolve to a `<: Object` at
-    # macroexpand time. We don't otherwise use T at expansion time; the
-    # generated `Type{<:classkind(T)}` resolves it again at function-def
-    # time in the user's module.
-    for (_, T_expr) in kindof_slots
-        P = try
-            Core.eval(__module__, T_expr)
-        catch err
-            wrappererror("@objcmethod could not resolve `$T_expr` (must be a wrapped class declared earlier): $err")
-        end
-        P isa Type && P <: Object ||
-            wrappererror("@objcmethod type parameter `$T_expr` must resolve to a subtype of `Object`, got $P")
-    end
-
-    # Helper: rewrite the user's positional args into the entry-side shape —
-    # each `KindOf{T}` slot becomes `::Object`, anonymous-typed args are
-    # named so the forwarder can reference them.
-    function entry_arg(i, a)
-        if Meta.isexpr(a, :(::)) && is_kindof_type(a.args[end])
-            :( $(arg_names[i])::$ObjectiveC.Object )
-        elseif Meta.isexpr(a, :(::)) && length(a.args) == 1
-            :( $(arg_names[i])::$(a.args[1]) )
-        else
-            a
-        end
-    end
-    rewritten_args = Any[entry_arg(i, a) for (i, a) in enumerate(args)]
-
-    # Body method: trait-dispatch args (`::Type{<:classkind(T)}`) prepended
-    # to the user's positional args (with KindOf slots rewritten to
-    # `::Object`). `combinedef` rebuilds the full def from the dict.
-    body_def = combinedef(merge(def, Dict(
-        :args => vcat(
-            Any[:( ::Type{<:$ObjectiveC.classkind($T_expr)} ) for (_, T_expr) in kindof_slots],
-            rewritten_args,
-        ),
-    )))
+    def[:args] = rewritten_args
+    new_def = combinedef(def)
     for dec in reverse(decorators)
-        body_def = Expr(:macrocall, dec.args[1:end-1]..., body_def)
-    end
-
-    # Entry forwarder: same positional args as the user wrote (with KindOf
-    # slots rewritten), forwards to the body method with
-    # `classkind(typeof(x))` prepended for each KindOf arg. Strip the rtype
-    # — the body carries it if any. Kwargs are forwarded by splat.
-    kwsym = isempty(kwargs) ? nothing : gensym(:kw)
-    fwd_args = vcat(
-        Any[:( $ObjectiveC.classkind(typeof($(arg_names[idx]))) ) for (idx, _) in kindof_slots],
-        Any[arg_names...],
-    )
-    fwd_call = if kwsym === nothing
-        Expr(:call, fname, fwd_args...)
-    else
-        Expr(:call, fname, Expr(:parameters, Expr(:..., kwsym)), fwd_args...)
-    end
-    entry_def = combinedef(Dict(
-        :name => fname,
-        :args => rewritten_args,
-        :kwargs => kwsym === nothing ? Any[] : Any[Expr(:..., kwsym)],
-        :whereparams => whereparams,
-        :body => fwd_call,
-    ))
-
-    # Two `@objcmethod` sites for the same function with disjoint
-    # `KindOf{T}` roots but otherwise identical args produce the same entry
-    # signature. Emitting it twice is "method overwriting", which Julia 1.12
-    # rejects during precompile. Guard the entry with a top-level check
-    # that asks `which` for the most-specific method on this exact arg
-    # tuple, and skip emission only when that method's signature already
-    # matches ours exactly. A `hasmethod` check would be too loose — for
-    # `Base.:(==)` it would return true via `==(::Any, ::Any)` and we'd
-    # never emit our entry. The body method's signature always differs
-    # across sites (it carries the trait-dispatch `Type{<:…Kind}` args), so
-    # it never needs guarding.
-    entry_arg_types = Any[
-        Meta.isexpr(a, :(::)) ? a.args[end] : :Any
-        for a in rewritten_args
-    ]
-    entry_sig_tuple = Expr(:curly, :Tuple, entry_arg_types...)
-    for tp in whereparams
-        entry_sig_tuple = Expr(:where, entry_sig_tuple, tp)
+        new_def = Expr(:macrocall, dec.args[1:end-1]..., new_def)
     end
 
     esc(quote
-        Core.@__doc__ $body_def
-        if !$ObjectiveC.has_exact_method($fname, $entry_sig_tuple)
-            $entry_def
-        end
+        Core.@__doc__ $new_def
     end)
-end
-
-# True iff `f` has a method whose signature is *exactly*
-# `Tuple{Core.Typeof(f), argtypes.parameters...}` — used by `@objcmethod` to
-# decide whether the entry forwarder is already in place. `hasmethod` would be
-# too loose (`hasmethod(==, Tuple{Object, Object})` is true via `==(::Any,
-# ::Any)`).  `Core.Typeof` gives `Type{T}` when `f` is itself a type and
-# `typeof(f)` otherwise, matching how the method table keys constructors —
-# without it, two `@objcmethod` overloads of a constructor would both fail
-# this check and both emit the entry forwarder, which Julia 1.12 rejects as
-# method overwriting during precompilation.
-function has_exact_method(@nospecialize(f), @nospecialize(argtypes::Type))
-    sig = Tuple{Core.Typeof(f), Base.unwrap_unionall(argtypes).parameters...}
-    m = try
-        which(f, argtypes)
-    catch
-        return false
-    end
-    m.sig === sig || m.sig == sig
 end
 
 
