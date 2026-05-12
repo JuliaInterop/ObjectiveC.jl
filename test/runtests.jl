@@ -291,28 +291,28 @@ end
     end
 end
 
-# `@objcmethod` methods declared at top level: they should dispatch on
+# Polymorphic methods declared at top level: they should dispatch on
 # subclasses declared later, even from outside the current testset.
-@objcmethod open_len_kind(s::KindOf{TestNSString})::Int =
+open_len_kind(s::TestNSStringLike)::Int =
     Int(@objc [s::id{TestNSString} length]::Culong)
-@objcmethod open_pair(a::KindOf{TestNSString}, b::KindOf{TestNSOperationQueue}) =
+open_pair(a::TestNSStringLike, b::TestNSOperationQueueLike) =
     (typeof(a), typeof(b))
 # Subclass declared *after* the methods above — Kind-lattice dispatch
 # means it just works, with no warning, no registry, and no Union to
 # refreeze.
 @objcwrapper TestLateSub <: TestNSString
 
-@testset "inheritance / @objcmethod" begin
+@testset "inheritance / Like aliases" begin
     # The existing @objcproperties fixture gives us a two-level hierarchy:
     #   TestNSMutableString <: TestNSString <: Object
     # plus a sibling TestNSOperationQueue <: Object.
 
     # Native subtyping on `Object{K}` mirrors the ObjC parent chain — there's
     # no bespoke `inherits_from` anymore, just `<:`.
-    @test TestNSMutableString <: Object{<:ObjectiveC.classkind(TestNSString)}
+    @test TestNSMutableString <: TestNSStringLike
     @test TestNSMutableString <: Object{<:ObjectiveC.classkind(Object)}
     @test !(TestNSString <: Object{<:ObjectiveC.classkind(TestNSMutableString)})
-    @test !(TestNSOperationQueue <: Object{<:ObjectiveC.classkind(TestNSString)})
+    @test !(TestNSOperationQueue <: TestNSStringLike)
 
     # The same relation viewed at the Kind level.
     @test ObjectiveC.classkind(TestNSMutableString) <: ObjectiveC.classkind(TestNSString)
@@ -334,25 +334,19 @@ end
     str = TestNSString(@objc [NSString stringWithUTF8String:"xyz"::Ptr{UInt8}]::id{TestNSString})
     queue = TestNSOperationQueue(@objc [NSOperationQueue new]::id{TestNSOperationQueue})
 
-    # @objcmethod dispatches on the Kind lattice — parent and every
-    # subclass route to the same body.
+    # A method typed on `TestNSStringLike` dispatches across the Kind
+    # lattice — parent and every subclass route to the same body.
     @test open_len_kind(mut) == 4    # subclass
     @test open_len_kind(str) == 3    # exact type
-    # …including subclasses declared *after* the @objcmethod site.
+    # …including subclasses declared *after* the method site.
     late = TestLateSub(@objc [NSString stringWithUTF8String:"xyz"::Ptr{UInt8}]::id{TestLateSub})
     @test open_len_kind(late) == 3
 
-    # non-conforming class → MethodError on the body method.
+    # non-conforming class → clean MethodError.
     @test_throws MethodError open_len_kind(queue)
 
-    # qualified `KindOf{T}` is recognized by @objcmethod
-    @objcmethod testlen_qualified(s::ObjectiveC.KindOf{TestNSString})::Int =
-        Int(@objc [s::id{TestNSString} length]::Culong)
-    @test testlen_qualified(mut) == 4
-
-    # the body sees the concrete subclass — `typeof(x)` resolves through
-    # the entry forwarder.
-    @objcmethod concretetype(s::KindOf{TestNSString}) = typeof(s)
+    # the body sees the concrete subclass.
+    concretetype(s::TestNSStringLike) = typeof(s)
     @test concretetype(mut) === TestNSMutableString
     @test concretetype(str) === TestNSString
 
@@ -360,47 +354,37 @@ end
     @test mut.length == 4
     @test unsafe_string(mut.UTF8String) == "abcd"
 
-    # multiple `KindOf{T}` slots: every slot is independently lowered into
-    # trait dispatch.
-    @objcmethod pair_same(a::KindOf{TestNSString}, b::KindOf{TestNSString}) =
+    # multiple `Like` slots: dispatch picks each concrete type
+    # independently.
+    pair_same(a::TestNSStringLike, b::TestNSStringLike) =
         (typeof(a), typeof(b))
     @test pair_same(mut, str) === (TestNSMutableString, TestNSString)
     @test pair_same(str, mut) === (TestNSString, TestNSMutableString)
 
-    # different `KindOf{T}` parents in a single signature — also covers
-    # the cross-hierarchy method created at top level above (open_pair).
+    # different parents in a single signature — also covers the
+    # cross-hierarchy method created at top level above (open_pair).
     @test open_pair(mut, queue) === (TestNSMutableString, TestNSOperationQueue)
     @test_throws MethodError open_pair(queue, queue)
     @test_throws MethodError open_pair(mut, mut)
 
-    # other positional args may be anonymous-typed (`::SomeType`) — that's
-    # a one-element `::` expression and must not be confused for a KindOf
-    # slot when locating substitutions.
-    @objcmethod with_anon(s::KindOf{TestNSString}, ::Type{T}) where {T<:Integer} =
+    # other positional args may be anonymous-typed (`::SomeType`).
+    with_anon(s::TestNSStringLike, ::Type{T}) where {T<:Integer} =
         (typeof(s), T)
     @test with_anon(mut, Int32) === (TestNSMutableString, Int32)
 
-    # `KindOf{Object}` matches any wrapper (every classkind <: ObjectKind),
-    # and a subclass declared afterwards also routes through it.
-    @objcmethod anyobj(x::KindOf{Object}) = typeof(x)
+    # `Object{<:ObjectKind}` matches any wrapper, and a subclass declared
+    # afterwards also routes through it.
+    anyobj(x::Object{<:ObjectiveC.ObjectKind}) = typeof(x)
     @test anyobj(mut) === TestNSMutableString
     @test anyobj(queue) === TestNSOperationQueue
     @test_nowarn @eval @objcwrapper TestNSAnyObjSub <: Object
 
-    # The legacy `open=true` keyword should now error.
-    @test_throws LoadError @eval @objcmethod open=true bad_open(x::KindOf{TestNSString}) = nothing
-
-    # Regression: two `@objcmethod` overloads of the same *constructor*
-    # (i.e. `f` is a type, not a generic function) must not both emit the
-    # `(::Object)` entry forwarder. The dedup guard keys methods by
-    # `Type{T}` rather than `typeof(T) == DataType`, otherwise both
-    # overloads emit the entry and Julia 1.12 rejects the redefinition
-    # during precompilation. `@objcwrapper` is `@eval`d so the macro
-    # check runs after the type exists.
+    # Constructor overloads via Like aliases compose normally: each is just
+    # a plain Julia method, no entry/body forwarder to dedup.
     @eval @objcwrapper TestCtorTarget <: Object
-    @eval @objcmethod TestCtorTarget(x::KindOf{TestNSString}) =
+    @eval TestCtorTarget(x::TestNSStringLike) =
         TestCtorTarget(reinterpret($id{TestCtorTarget}, $pointer(x)))
-    @test_nowarn @eval @objcmethod TestCtorTarget(x::KindOf{TestNSOperationQueue}) =
+    @test_nowarn @eval TestCtorTarget(x::TestNSOperationQueueLike) =
         TestCtorTarget(reinterpret($id{TestCtorTarget}, $pointer(x)))
 end
 

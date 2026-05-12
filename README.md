@@ -44,25 +44,27 @@ julia> obj = NSValue(obj_ptr)
 NSValue (object of type NSConcreteValue)
 ```
 
-`@objcwrapper` emits a concrete `struct NSValue <: Object{NSValueKind}` holding the `id`
-pointer. The macro also generates conversion routines so the wrapper can be passed directly
-to `@objc` calls expecting `id`.
+`@objcwrapper` emits three names: an abstract `NSValueKind` (parallel class lattice), a
+concrete `struct NSValue <: Object{NSValueKind}` holding the `id` pointer, and a
+`const NSValueLike = Object{<:NSValueKind}` alias for polymorphic dispatch. The macro
+also generates conversion routines so the wrapper can be passed directly to `@objc` calls
+expecting `id`.
 
-To declare a method on a wrapper class, use `@objcmethod` with a `KindOf{T}` argument
-marker:
+To declare a method on a wrapper class, write a plain Julia method:
 
 ```julia
-julia> @objcmethod get_pointer(val::KindOf{NSValue}) =
+julia> get_pointer(val::NSValue) =
            @objc [val::id{NSValue} pointerValue]::Ptr{Cvoid}
 
 julia> get_pointer(obj)
 Ptr{Nothing} @0x0000000000000000
 ```
 
-`KindOf{T}` in combination with `@objcmethod` makes the method polymorphic over `T` and any
-wrapped subclasses; important because the concrete wrappers are leaf types (`NSMutableString`
-is *not* Julia-`<:` `NSString`), so a plain `f(val::NSString, …)` would silently fail to
-dispatch on a subclass.
+Because the concrete wrappers are leaf types (`NSMutableString` is *not* Julia-`<:`
+`NSString`), a plain `f(val::NSString, …)` matches only `NSString` itself. To accept any
+subclass too, type the argument as `NSStringLike` — the alias resolves to
+`Object{<:NSStringKind}`, which matches the leaf and every wrapped subclass via native
+subtyping.
 
 
 ## Type model
@@ -72,55 +74,18 @@ Every `@objcwrapper Foo <: Bar` declaration produces:
 * an abstract `FooKind <: BarKind` (defaulting to `<: ObjectKind`), encoding the ObjC class
   hierarchy in a parallel lattice of abstract types;
 * a concrete `struct Foo <: Object{FooKind}` holding `ptr::id{Foo}`, linking the wrapper to
-  its slot in that lattice via `Object`'s type parameter.
+  its slot in that lattice via `Object`'s type parameter;
+* a `const FooLike = Object{<:FooKind}` alias for use in method signatures.
 
-The concrete struct chain stays flat: wrappers are leaves, so `Vector{NSString}` is
-alloc-free and inference sees a single fixed type through container access. Polymorphism
-lives entirely in `Object`'s Kind parameter: `Object{<:FooKind}` matches `Foo` and every
-wrapped subclass via Julia's normal subtyping rules.
+The concrete struct is intended to be used for storage purposes, and makes sure Julia
+generates efficient code. For example, `Vector{NSString}` is allocated inline, and inference
+sees a single fixed type through container access, even when `NSString` might actually be
+backed by a variety of different Objective-C classes (as long as they are not separately
+wrapped by `@objcwrapper` themselves).
 
-### Methods on wrapper classes
-
-**Recommendation: use `@objcmethod` with `KindOf{T}` for wrapper-typed parameters.** Because
-the concrete struct chain is flat, a plain `f(x::Parent, …)` is monomorphic and does *not*
-match a later `@objcwrapper Sub <: Parent`. To avoid this footgun, route every wrapper-typed
-argument through `@objcmethod` and mark it with `KindOf{T}`:
-
-```julia
-@objcmethod release(obj::KindOf{NSObject}) =
-    @objc [obj::id{NSObject} release]::Cvoid
-
-@objcmethod endEncoding!(ce::KindOf{MTLCommandEncoder}) =
-    @objc [ce::id{MTLCommandEncoder} endEncoding]::Nothing
-
-@objcmethod function Base.copy(kernel::KindOf{MPSKernel})
-    K = typeof(kernel)
-    obj = @objc [kernel::id{MPSKernel} copy]::id{MPSKernel}
-    K(reinterpret(id{K}, obj))
-end
-```
-
-`@objcmethod` rewrites every `arg::KindOf{T}` slot to `arg::Object{<:classkind(T)}` and
-emits a plain Julia method. Dispatch follows ordinary Julia method specificity on the
-parametric `Object{K}`, so call-site behaviour is exactly what you'd get from writing the
-rewritten signature by hand.
-
-`KindOf{T}` is **macro-level syntax**, not a real Julia type. The marker never reaches
-runtime, so it cannot appear in containers, fields, or return positions.
-
-**When to write a plain method instead.** Skipping `@objcmethod` is fine when:
-
-* The class is a true leaf with no `@objcwrapper` subclasses (e.g. `NSString`, where the
-  underlying `__NSCFString` / `NSTaggedPointerString` subclasses are *not* wrapped on the
-  Julia side and so `typeof(obj)` is always `NSString`). The ObjC runtime still
-  dispatches to the real concrete class via `objc_msgSend`, so a normal
-  `Base.length(s::NSString) = Int(s.length)` works correctly.
-* You genuinely want to refuse subclasses (rare in Objective-C, where messaging is
-  polymorphic by design).
-
-In all other cases, prefer `@objcmethod`: it's no slower than the rewritten Julia method
-it desugars to, and protects against breakage when a downstream `@objcwrapper Sub <:
-Parent` lands.
+For method definitions, the `FooLike` alias should be used instead of the concrete struct
+type, which only matches the specific class declared by the wrapper and not any subclasses.
+The `Like` alias fixes this, allowing objects of subclasses to be passed to methods.
 
 
 ## Properties
