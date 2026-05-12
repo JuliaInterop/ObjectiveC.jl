@@ -144,7 +144,10 @@ module NoObjectImport
     @objcwrapper NoImportWrapper
 end
 @testset "@objcwrapper default super qualified" begin
-    @test supertype(NoObjectImport.NoImportWrapper) === ObjectiveC.Object
+    # `Object` is parametric on Kind, so the immediate supertype is a
+    # parameterized `Object{NoImportWrapperKind}`. Subtyping into the
+    # unparameterized umbrella still holds.
+    @test NoObjectImport.NoImportWrapper <: ObjectiveC.Object
     @test ObjectiveC.objc_parent(NoObjectImport.NoImportWrapper) === ObjectiveC.Object
 end
 
@@ -304,18 +307,14 @@ end
     #   TestNSMutableString <: TestNSString <: Object
     # plus a sibling TestNSOperationQueue <: Object.
 
-    # ObjectiveC.inherits_from: walks the Kind lattice
-    @test ObjectiveC.inherits_from(TestNSString, TestNSString)
-    @test ObjectiveC.inherits_from(TestNSMutableString, TestNSString)
-    @test ObjectiveC.inherits_from(TestNSMutableString, Object)
-    @test !ObjectiveC.inherits_from(TestNSString, TestNSMutableString)
-    @test !ObjectiveC.inherits_from(TestNSOperationQueue, TestNSString)
-    @test !ObjectiveC.inherits_from(TestNSString, TestNSOperationQueue)
-    # non-Object types fall through to `classkind = Nothing`
-    @test !ObjectiveC.inherits_from(Int, TestNSString)
-    @test !ObjectiveC.inherits_from(TestNSString, Int)
+    # Native subtyping on `Object{K}` mirrors the ObjC parent chain — there's
+    # no bespoke `inherits_from` anymore, just `<:`.
+    @test TestNSMutableString <: Object{<:ObjectiveC.classkind(TestNSString)}
+    @test TestNSMutableString <: Object{<:ObjectiveC.classkind(Object)}
+    @test !(TestNSString <: Object{<:ObjectiveC.classkind(TestNSMutableString)})
+    @test !(TestNSOperationQueue <: Object{<:ObjectiveC.classkind(TestNSString)})
 
-    # the Kind lattice mirrors the ObjC parent chain
+    # The same relation viewed at the Kind level.
     @test ObjectiveC.classkind(TestNSMutableString) <: ObjectiveC.classkind(TestNSString)
     @test ObjectiveC.classkind(TestNSString) <: ObjectiveC.classkind(Object)
     @test !(ObjectiveC.classkind(TestNSOperationQueue) <: ObjectiveC.classkind(TestNSString))

@@ -130,20 +130,18 @@ Base.:(==)(x::Ptr, y::id) = throw(ArgumentError("Cannot compare id with Ptr"))
 
 # conversion between pointers: refuse to convert between unrelated types
 function Base.convert(::Type{id{T}}, x::id{U}) where {T,U}
-    # nil is an exception (we want to be able to use `nil` in `@objc` directly)
+    # `nil` is an exception (we want to use it in `@objc` slots directly).
     x == nil && return Base.bitcast(id{T}, nil)
-    # allow conversion to a Julia supertype, or up an Objective-C inheritance chain (encoded
-    # by `inherits_from`). When both U and T are concrete leaf classes, Julia's `<:` alone
-    # is insufficient, since every `@objcwrapper` class is <:Object but not <:its-ObjC-parent.
-    if !(U <: T) && !(compatible_id_types(T, U)::Bool)
+    # `U <: T` handles self-conversion and conversion to the unparameterized
+    # `Object` umbrella. `U <: Object{<:classkind(T)}` handles the ObjC
+    # subclass → parent direction: concrete wrappers are leaves in Julia's
+    # type system, but `Object`'s Kind parameter carries the ObjC hierarchy,
+    # so `Object{<:Kt}` matches every wrapper whose Kind is a subkind of Kt.
+    if !(U <: T) && !(U <: Object{<:classkind(T)})
         throw(ArgumentError("Cannot convert id{$U} to id{$T}"))
     end
     Base.bitcast(id{T}, x)
 end
-
-# default: only Julia subtyping. syntax.jl extends this to use `inherits_from`
-# for the Object hierarchy.
-compatible_id_types(::Type, ::Type) = false
 
 # conversion to integer
 Base.Int(x::id)  = Base.bitcast(Int, x)
@@ -161,12 +159,22 @@ Base.unsafe_convert(::Type{P}, x::id) where {P<:id} = convert(P, x)
 
 # Objects
 
-# Object is the sole abstract supertype of every Objective-C wrapper. Each
-# `@objcwrapper` declaration emits a concrete `struct`/`mutable struct` that
-# inherits directly from `Object`. The Objective-C class hierarchy is encoded
-# via a recursive `inherits_from` trait (see syntax.jl) rather than via
-# Julia's `<:` relation.
-abstract type Object end
+# Object is the abstract supertype of every Objective-C wrapper, parameterized
+# by its **Kind** — a parallel abstract type that mirrors the ObjC class
+# hierarchy. Each `@objcwrapper Foo <: Bar` emits an `abstract type FooKind <:
+# BarKind` and a concrete `struct Foo <: Object{FooKind}`. Method signatures
+# can then constrain on `Object{<:FooKind}` to match Foo and every wrapped
+# subclass via native Julia subtyping — no parallel trait dispatch needed.
+abstract type ObjectKind end
+abstract type Object{K} end
+
+# Extract a wrapper's Kind from its `Object{K}` parameter. The fallbacks cover
+# the unparameterized `Object` umbrella (returns the root Kind, so subclass
+# checks against `Object` accept everything) and non-Object types (returns
+# `Nothing`, so kind-based subtype checks reject them cleanly).
+classkind(::Type{<:Object{K}}) where {K} = K
+classkind(::Type{Object}) = ObjectKind
+classkind(::Type) = Nothing
 
 const nil = id{Object}(0)
 
