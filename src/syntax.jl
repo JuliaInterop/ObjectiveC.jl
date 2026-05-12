@@ -679,6 +679,10 @@ macro objcproperties(typ, ex)
     # cascade and infer the precise return type (without it, the body's return type degrades
     # to the Union of every property type in the ancestor chain).
     #
+    # `object` is intentionally left untyped. The parent-chain walk forwards a subclass
+    # instance to the parent's `objc_getproperty(::Type{Parent}, object, field)`, but the
+    # concrete wrappers are flat leaves, so the subclass is *not* `<:Parent` — typing the
+    # slot on `Parent` would fail to dispatch.
     getproperties_ex = quote end
     if !isempty(read_properties)
         current = nothing

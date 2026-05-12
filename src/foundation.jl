@@ -33,9 +33,6 @@ export NSObject, retain, release, autorelease, is_kind_of
     @autoproperty retainCount::NSUInteger
 end
 
-# Methods defined by ObjC on NSObject. The `NSObjectLike` alias matches
-# `NSObject` and every wrapped subclass (Metal, MPS, user code) via native
-# Julia subtyping, so downstream wrappers automatically participate.
 function Base.show(io::IO, ::MIME"text/plain", obj::NSObjectLike)
     if get(io, :compact, false)
         print(io, String(obj.description))
