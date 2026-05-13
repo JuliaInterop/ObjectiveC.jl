@@ -44,83 +44,65 @@ julia> obj = NSValue(obj_ptr)
 NSValue (object of type NSConcreteValue)
 ```
 
-`@objcwrapper` emits a concrete `struct NSValue <: Object{NSValueKind}` holding the `id`
-pointer. The macro also generates conversion routines so the wrapper can be passed directly
-to `@objc` calls expecting `id`.
+`@objcwrapper` emits three names — a concrete `struct NSValue <: Object{NSValueKind}`
+holding the `id` pointer, an abstract `NSValueKind` slotted into a parallel class
+lattice, and a `const NSValueLike = Object{<:NSValueKind}` alias for polymorphic dispatch
+— and generates conversion routines so the wrapper can be passed directly to `@objc`
+calls expecting `id`. See [Type model](#type-model) below for the rationale behind the
+three-name split.
 
-To declare a method on a wrapper class, use `@objcmethod` with a `KindOf{T}` argument
-marker:
+To declare a method on a wrapper class, write a plain Julia method:
 
 ```julia
-julia> @objcmethod get_pointer(val::KindOf{NSValue}) =
+julia> get_pointer(val::NSValueLike) =
            @objc [val::id{NSValue} pointerValue]::Ptr{Cvoid}
 
 julia> get_pointer(obj)
 Ptr{Nothing} @0x0000000000000000
 ```
 
-`KindOf{T}` in combination with `@objcmethod` makes the method polymorphic over `T` and any
-wrapped subclasses; important because the concrete wrappers are leaf types (`NSMutableString`
-is *not* Julia-`<:` `NSString`), so a plain `f(val::NSString, …)` would silently fail to
-dispatch on a subclass.
+Use `NSValueLike` (not `NSValue`) in the argument type: see the next section for why.
 
 
 ## Type model
 
-Every `@objcwrapper Foo <: Bar` declaration produces:
+Objective-C lets a class be both *instantiated* and *subclassed with added state*. Julia's
+type system doesn't allow concrete types to be extended that way, so ObjectiveC.jl splits
+each ObjC class into separate Julia names for those two roles:
 
-* an abstract `FooKind <: BarKind` (defaulting to `<: ObjectKind`), encoding the ObjC class
-  hierarchy in a parallel lattice of abstract types;
-* a concrete `struct Foo <: Object{FooKind}` holding `ptr::id{Foo}`, linking the wrapper to
-  its slot in that lattice via `Object`'s type parameter.
+* the **concrete leaf** `Foo`: what you instantiate and store. Leaves are flat
+  (`NSMutableString` is *not* Julia-`<:` `NSString`), which lets `Vector{NSString}` allocate
+  inline and lets inference see a single fixed type through container access, even when the
+  underlying Objective-C class varies at runtime.
+* the **abstract kind** `FooKind <: BarKind`: a parallel lattice of abstract types
+  mirroring the ObjC class hierarchy. The concrete struct's supertype embeds it directly
+  via `Foo <: Object{FooKind}`, so subkind relationships are native Julia subtyping rather
+  than a side table.
+* the **polymorphic alias** `FooLike = Object{<:FooKind}`: what you dispatch on.
+  `Object{<:FooKind}` matches `Foo` and every `@objcwrapper`ed subclass via ordinary `<:`,
+  so a method written against `FooLike` keeps working when new subclasses land later,
+  including in downstream packages.
 
-The concrete struct chain stays flat: wrappers are leaves, so `Vector{NSString}` is
-alloc-free and inference sees a single fixed type through container access. Polymorphism
-lives entirely in `Object`'s Kind parameter: `Object{<:FooKind}` matches `Foo` and every
-wrapped subclass via Julia's normal subtyping rules.
+In short, every `@objcwrapper Foo <: Bar` produces *one type for storage, one parameter
+for the lattice, and one alias for dispatch*. The macro arranges the wiring; downstream
+code uses the leaf for fields and containers, and the `Like` alias in method signatures.
 
-### Methods on wrapper classes
+### Defining methods
 
-**Recommendation: use `@objcmethod` with `KindOf{T}` for wrapper-typed parameters.** Because
-the concrete struct chain is flat, a plain `f(x::Parent, …)` is monomorphic and does *not*
-match a later `@objcwrapper Sub <: Parent`. To avoid this footgun, route every wrapper-typed
-argument through `@objcmethod` and mark it with `KindOf{T}`:
+Prefer the `Like` alias for any method that should accept subclasses:
 
 ```julia
-@objcmethod release(obj::KindOf{NSObject}) =
-    @objc [obj::id{NSObject} release]::Cvoid
-
-@objcmethod endEncoding!(ce::KindOf{MTLCommandEncoder}) =
-    @objc [ce::id{MTLCommandEncoder} endEncoding]::Nothing
-
-@objcmethod function Base.copy(kernel::KindOf{MPSKernel})
-    K = typeof(kernel)
-    obj = @objc [kernel::id{MPSKernel} copy]::id{MPSKernel}
-    K(reinterpret(id{K}, obj))
-end
+release(obj::NSObjectLike) = @objc [obj::id{NSObject} release]::Cvoid
 ```
 
-`@objcmethod` rewrites every `arg::KindOf{T}` slot to `arg::Object{<:classkind(T)}` and
-emits a plain Julia method. Dispatch follows ordinary Julia method specificity on the
-parametric `Object{K}`, so call-site behaviour is exactly what you'd get from writing the
-rewritten signature by hand.
+A plain `f(x::Foo)` is monomorphic: it matches `Foo` and nothing else. That's
+occasionally what you want (true leaf classes like `NSString` itself, whose ObjC
+subclasses like `__NSCFString` are not wrapped on the Julia side, or methods that should
+deliberately refuse subclasses), but in general `FooLike` is the right default.
 
-`KindOf{T}` is **macro-level syntax**, not a real Julia type. The marker never reaches
-runtime, so it cannot appear in containers, fields, or return positions.
-
-**When to write a plain method instead.** Skipping `@objcmethod` is fine when:
-
-* The class is a true leaf with no `@objcwrapper` subclasses (e.g. `NSString`, where the
-  underlying `__NSCFString` / `NSTaggedPointerString` subclasses are *not* wrapped on the
-  Julia side and so `typeof(obj)` is always `NSString`). The ObjC runtime still
-  dispatches to the real concrete class via `objc_msgSend`, so a normal
-  `Base.length(s::NSString) = Int(s.length)` works correctly.
-* You genuinely want to refuse subclasses (rare in Objective-C, where messaging is
-  polymorphic by design).
-
-In all other cases, prefer `@objcmethod`: it's no slower than the rewritten Julia method
-it desugars to, and protects against breakage when a downstream `@objcwrapper Sub <:
-Parent` lands.
+Dispatch and specificity follow Julia's normal rules: when both `f(x::FooLike)` and
+`f(x::SubFooLike)` are defined, the more specific subclass method wins; `typeof(x)` inside
+a `FooLike`-typed body sees the actual concrete leaf.
 
 
 ## Properties
