@@ -166,7 +166,7 @@ Base.unsafe_convert(::Type{P}, x::id) where {P<:id} = convert(P, x)
 # can then constrain on `Object{<:FooKind}` to match Foo and every wrapped
 # subclass via native Julia subtyping — no parallel trait dispatch needed.
 abstract type ObjectKind end
-abstract type Object{K} end
+abstract type Object{K<:ObjectKind} end
 
 # Extract a wrapper's Kind from its `Object{K}` parameter. The fallbacks cover
 # the unparameterized `Object` umbrella (returns the root Kind, so subclass

@@ -9,7 +9,6 @@ export @objc, @objcwrapper, @objcproperties, @objcblock
 
 # `objc_parent` walks the wrapper hierarchy for `@objcproperties`'s property
 # chain (which inherits ancestors' getters/setters).
-objc_parent(::Type{Object}) = nothing
 objc_parent(::Type{<:Object}) = nothing
 
 
