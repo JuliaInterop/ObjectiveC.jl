@@ -44,25 +44,6 @@ julia> obj = NSValue(obj_ptr)
 NSValue (object of type NSConcreteValue)
 ```
 
-`@objcwrapper` emits three names — a concrete `struct NSValue <: Object{NSValueKind}`
-holding the `id` pointer, an abstract `NSValueKind` slotted into a parallel class
-lattice, and a `const NSValueLike = Object{<:NSValueKind}` alias for polymorphic dispatch
-— and generates conversion routines so the wrapper can be passed directly to `@objc`
-calls expecting `id`. See [Type model](#type-model) below for the rationale behind the
-three-name split.
-
-To declare a method on a wrapper class, write a plain Julia method:
-
-```julia
-julia> get_pointer(val::NSValueLike) =
-           @objc [val::id{NSValue} pointerValue]::Ptr{Cvoid}
-
-julia> get_pointer(obj)
-Ptr{Nothing} @0x0000000000000000
-```
-
-Use `NSValueLike` (not `NSValue`) in the argument type: see the next section for why.
-
 
 ## Type model
 
@@ -85,24 +66,15 @@ each ObjC class into separate Julia names for those two roles:
 
 In short, every `@objcwrapper Foo <: Bar` produces *one type for storage, one parameter
 for the lattice, and one alias for dispatch*. The macro arranges the wiring; downstream
-code uses the leaf for fields and containers, and the `Like` alias in method signatures.
-
-### Defining methods
-
-Prefer the `Like` alias for any method that should accept subclasses:
+code uses the leaf for fields and containers, and the `Like` alias in method signatures:
 
 ```julia
-release(obj::NSObjectLike) = @objc [obj::id{NSObject} release]::Cvoid
+julia> get_pointer(val::NSValueLike) =
+           @objc [val::id{NSValue} pointerValue]::Ptr{Cvoid}
+
+julia> get_pointer(obj)
+Ptr{Nothing} @0x0000000000000000
 ```
-
-A plain `f(x::Foo)` is monomorphic: it matches `Foo` and nothing else. That's
-occasionally what you want (true leaf classes like `NSString` itself, whose ObjC
-subclasses like `__NSCFString` are not wrapped on the Julia side, or methods that should
-deliberately refuse subclasses), but in general `FooLike` is the right default.
-
-Dispatch and specificity follow Julia's normal rules: when both `f(x::FooLike)` and
-`f(x::SubFooLike)` are defined, the more specific subclass method wins; `typeof(x)` inside
-a `FooLike`-typed body sees the actual concrete leaf.
 
 
 ## Properties
@@ -250,9 +222,8 @@ familiar with Julia.
 
 ## Current status
 
-ObjectiveC.jl has recently been revamped, and is still under heavy development. Do not
-assume its APIs are stable until version 1.0 is released. That said, it is being used
-as the main FFI for [Metal.jl](https://github.com/JuliaGPU/Metal.jl), so you can expect
+ObjectiveC.jl is still under active development, so breaking releases are to be expected.
+That said, the package is used as the main FFI for [Metal.jl](https://github.com/JuliaGPU/Metal.jl), so you can expect
 the existing functionality to be fairly solid.
 
 In the process of revamping the package, some functionality was lost, including the ability
