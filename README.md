@@ -7,7 +7,7 @@
 [github-img]: https://github.com/JuliaInterop/ObjectiveC.jl/actions/workflows/ci.yml/badge.svg
 [github-url]: https://github.com/JuliaInterop/ObjectiveC.jl/actions/workflows/ci.yml
 
-[codecov-img]: https://codecov.io/gh/JuliaInterop/ObjectiveC.jl/branch/master/graph/badge.svg
+[codecov-img]: https://codecov.io/gh/JuliaInterop/ObjectiveC.jl/branch/main/graph/badge.svg
 [codecov-url]: https://codecov.io/gh/JuliaInterop/ObjectiveC.jl
 
 
