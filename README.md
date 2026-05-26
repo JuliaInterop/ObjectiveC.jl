@@ -138,17 +138,22 @@ julia> function hello(x)
 julia> block = @objcblock(hello, Cint, (Cint,))
 ```
 
-This object can now be passed to Objective-C methods that take blocks as arguments. Note
-that before Julia 1.9, blocks should only ever be called from Julia-managed threads, or else
-your application will crash.
+This object can now be passed to Objective-C methods that take blocks as arguments. The
+callable runs synchronously on the thread that invokes the block. Since Julia 1.9 a foreign
+thread is adopted into the runtime when it enters Julia, so the block may be invoked from any
+thread; before Julia 1.9 it could only be called from Julia-managed threads, or else the
+application would crash. Even with adoption, the callable still runs synchronously on the
+invoking thread, so it must not task-switch (yield, wait, do I/O) when another thread may be
+blocked waiting for the block to return — doing so can deadlock.
 
-If you need to use blocks that may be called from unrelated threads on Julia 1.8 or earlier,
-you can use the `@objasyncblock` macro instead. This variant takes an `AsyncCondition` that
-will be executed on the libuv event loop after the block has been called. Note that there
-may be some time between the block being called and the condition being executed, and libuv
-may decide to coalesce multiple conditions into a single execution, so it is preferred to
-use `@objcblock` whenever possible. It is also not possible to pass any arguments to the
-condition, but you can use a closure to capture any state you need:
+For fire-and-forget callbacks where no synchronous result is required, use the
+`@objcasyncblock` macro instead. Rather than running Julia code on the invoking thread, it
+signals an `AsyncCondition` on the libuv event loop and returns immediately, so the handler
+runs asynchronously on a Julia-managed thread and the invoking (possibly foreign) thread is
+never blocked. Note that there may be some time between the block being called and the
+condition being executed, and libuv may coalesce multiple signals into a single execution.
+It is also not possible to pass any arguments to the condition, but you can use a closure to
+capture any state you need:
 
 ```julia-repl
 julia> counter = 0

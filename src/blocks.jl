@@ -112,10 +112,16 @@ a value of type `rettyp`, similar to how `@cfunction` works.
 
 The callback may be a closure, and does not need any special syntax for that case.
 
-!!! warn
-
-    Note that on Julia 1.8 or earlier, the block may only be called from Julia threads.
-    If this is a problem, you can use `@objcasyncblock` instead.
+The callable runs **synchronously, on the thread that invokes the block**. Since
+Julia 1.9 a foreign thread (e.g. a Grand Central Dispatch worker) is adopted into
+the runtime when it enters Julia, so the block may be invoked from any thread.
+Note, however, that adoption only makes it *safe* to run Julia code there; it does
+not make it safe to *task-switch* (yield, wait, perform I/O, take a contended
+lock) when another thread may be blocked waiting for the block to return — e.g. an
+Objective-C method that does not return until its callbacks have run. In that
+situation, yielding deadlocks: the callback waits for the scheduler while the
+scheduler is held on the blocked thread. Use [`@objcasyncblock`](@ref) for such
+fire-and-forget callbacks where no synchronous result is required.
 
 Also see: [`@cfunction`](@ref), [`@objcasyncblock`](@ref)
 """
@@ -205,15 +211,27 @@ end
 """
     @objcasyncblock(cond::AsyncCondition)
 
-Returns an Objective-C block (as an `NSBlock` object) that schedules an async condition
-object `cond` for execution on the libuv event loop.
+Returns an Objective-C block (as an `NSBlock` object) that, when invoked, signals the
+`Base.AsyncCondition` `cond` via `uv_async_send` and returns immediately, without
+running any Julia code on the invoking thread.
 
-!!! note
+Use this for fire-and-forget callbacks where no synchronous result is required and the
+work should happen outside the caller's stack — on a Julia-managed thread driven by the
+libuv event loop. Compared to [`@objcblock`](@ref), which runs the callable synchronously
+on whatever thread invokes the block, this defers handling to a task waiting on `cond`.
+That has two benefits:
 
-    This macro is intended for use on Julia 1.8 and earlier. On Julia 1.9, you can always
-    use `@objcblock` instead.
+  - the invoking thread (often an OS-owned Grand Central Dispatch worker) returns
+    instantly, so it is never blocked by Julia work; and
+  - because no Julia code runs on the foreign thread, there is no risk of deadlocking by
+    task-switching from a callback that another thread is synchronously waiting on (see
+    the note in [`@objcblock`](@ref)).
 
-Also see: [`Base.AsyncCondition`](@ref)
+The trade-off is that the block cannot return a value to its caller, and the handler runs
+asynchronously rather than inline. Set up `cond` with a callback, or `wait` on it, to
+react to the signal.
+
+Also see: [`@objcblock`](@ref), [`Base.AsyncCondition`](@ref)
 """
 macro objcasyncblock(cond)
     quote
