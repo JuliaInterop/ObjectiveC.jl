@@ -628,11 +628,11 @@ macro autoreleasepool(ex...)
         # function definition, short form
         sig, body = code.args
         @assert Meta.isexpr(body, :block)
-        managed_body = quote
-            $f() do
+        managed_body = Expr(:block, __source__,
+            :($f() do
                 $body
-            end
-        end
+            end)
+        )
         esc(Expr(:(=), sig, managed_body))
     elseif Meta.isexpr(code, :function)
         # function definition, long form
@@ -640,11 +640,11 @@ macro autoreleasepool(ex...)
         @assert Meta.isexpr(sig, :call) || Meta.isexpr(sig, :where)
         body = code.args[2]
         @assert Meta.isexpr(body, :block)
-        managed_body = quote
-            $f() do
+        managed_body = Expr(:block, __source__,
+            :($f() do
                 $body
-            end
-        end
+            end)
+        )
         esc(Expr(:function, sig, managed_body))
     else
         # code block
