@@ -13,7 +13,7 @@ export tracing_subscribe, tracing_unsubscribe, tracing_timebase
 # recompilation. This trades a tiny always-present cost for instant, invalidation-free
 # toggling. See the message-send codegen in `syntax.jl`.
 
-# The active subscriber wrapper, read once at every `@objc` call. `nothing` means tracing is
+# The active subscriber token, read once at every `@objc` call. `C_NULL` means tracing is
 # disabled. We keep retired wrappers rooted for the session: a call site may have loaded a
 # wrapper immediately before entering the GC-safe `objc_msgSend`, and another thread may
 # unsubscribe while that call is in flight. Retaining only the tiny wrapper (with its callback
@@ -24,7 +24,8 @@ mutable struct TracingSubscriber
 end
 TracingSubscriber(callback) = TracingSubscriber(callback, false)
 
-const tracing_subscriber = Ref{Any}(nothing)
+const tracing_subscriber = Ref{Ptr{Cvoid}}(C_NULL)
+const active_tracing_subscriber = Ref{Union{Nothing,TracingSubscriber}}(nothing)
 const retired_tracing_subscribers = TracingSubscriber[]
 const tracing_subscriber_lock = ReentrantLock()
 
@@ -73,8 +74,9 @@ end
 
 # Invoked (only when a subscriber is registered) around each message send. Kept out of line so
 # the inlined hot path is just the load + branch.
-@noinline function tracing_dispatch(@nospecialize(sub), class::Symbol, sel::Symbol,
+@noinline function tracing_dispatch(sub_ptr::Ptr{Cvoid}, class::Symbol, sel::Symbol,
                                     t0::UInt64, t1::UInt64)
+    sub = Base.unsafe_pointer_to_objref(sub_ptr)::TracingSubscriber
     callback = sub.callback
     callback === nothing && return
 
@@ -87,7 +89,10 @@ end
             # a faulty callback must never take down the traced program; disable and report
             lock(tracing_subscriber_lock) do
                 retire_tracing_subscriber(sub)
-                tracing_subscriber[] === sub && (tracing_subscriber[] = nothing)
+                if active_tracing_subscriber[] === sub
+                    active_tracing_subscriber[] = nothing
+                    tracing_subscriber[] = C_NULL
+                end
             end
             @error "ObjectiveC.jl tracing callback failed; tracing disabled" exception=(err, catch_backtrace())
         finally
@@ -115,10 +120,12 @@ accumulate into a preallocated structure and defer expensive processing until af
 """
 function tracing_subscribe(@nospecialize(callback))
     lock(tracing_subscriber_lock) do
-        tracing_subscriber[] === nothing ||
+        active_tracing_subscriber[] === nothing ||
             error("ObjectiveC.jl already has a tracing subscriber; call `tracing_unsubscribe()` first.")
         ensure_tracing_guard()
-        tracing_subscriber[] = TracingSubscriber(callback)
+        sub = TracingSubscriber(callback)
+        active_tracing_subscriber[] = sub
+        tracing_subscriber[] = Base.pointer_from_objref(sub)
     end
     return callback
 end
@@ -130,10 +137,11 @@ Remove the active tracing subscriber registered with [`tracing_subscribe`](@ref)
 """
 function tracing_unsubscribe()
     lock(tracing_subscriber_lock) do
-        sub = tracing_subscriber[]
+        sub = active_tracing_subscriber[]
         if sub !== nothing
             retire_tracing_subscriber(sub)
-            tracing_subscriber[] = nothing
+            active_tracing_subscriber[] = nothing
+            tracing_subscriber[] = C_NULL
         end
     end
     return

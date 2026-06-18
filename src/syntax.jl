@@ -215,6 +215,22 @@ function make_gcsafe(ex)
 end
 
 function class_message(class_name, msg, rettyp, argtyps, argvals)
+    send = if ABI.use_stret(rettyp)
+        # we follow Julia's ABI implementation,
+        # so ccall will handle the sret box
+        make_gcsafe(:(
+            ccall(:objc_msgSend_stret, $rettyp,
+                  (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+                  class, sel, $(map(esc, argvals)...))
+        ))
+    else
+        make_gcsafe(:(
+            ccall(:objc_msgSend, $rettyp,
+                  (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+                  class, sel, $(map(esc, argvals)...))
+        ))
+    end
+
     quote
         class = Class($(String(class_name)))
         sel = $(objc_selector_expr(msg))
@@ -229,27 +245,14 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
         end
         # Runtime tracing hook (see tracing.jl): one global read + predicted branch when off.
         obj_sub = tracing_subscriber[]
-        obj_t0 = obj_sub === nothing ? UInt64(0) : tracing_clock()
-        ret = $(
-            if ABI.use_stret(rettyp)
-                # we follow Julia's ABI implementation,
-                # so ccall will handle the sret box
-                make_gcsafe(:(
-                    ccall(:objc_msgSend_stret, $rettyp,
-                          (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                          class, sel, $(map(esc, argvals)...))
-                ))
-            else
-                make_gcsafe(:(
-                    ccall(:objc_msgSend, $rettyp,
-                          (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                          class, sel, $(map(esc, argvals)...))
-                ))
-            end
-        )
-        obj_sub === nothing ||
+        if obj_sub == C_NULL
+            ret = $send
+        else
+            obj_t0 = tracing_clock()
+            ret = $send
             tracing_dispatch(obj_sub, $(QuoteNode(Symbol(class_name))),
                              $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
+        end
         @static if $tracing
             if $rettyp !== Nothing
                 Core.print(io, "  ")
@@ -263,6 +266,22 @@ end
 
 function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_label=:id)
     # TODO: use the instance type `typ` to verify when in validation mode?
+    send = if ABI.use_stret(rettyp)
+        # we follow Julia's ABI implementation,
+        # so ccall will handle the sret box
+        make_gcsafe(:(
+            ccall(:objc_msgSend_stret, $rettyp,
+                  (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+                  $instance, sel, $(map(esc, argvals)...))
+        ))
+    else
+        make_gcsafe(:(
+            ccall(:objc_msgSend, $rettyp,
+                  (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
+                  $instance, sel, $(map(esc, argvals)...))
+        ))
+    end
+
     quote
         sel = $(objc_selector_expr(msg))
         @static if $tracing
@@ -278,27 +297,14 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_la
         end
         # Runtime tracing hook (see tracing.jl): one global read + predicted branch when off.
         obj_sub = tracing_subscriber[]
-        obj_t0 = obj_sub === nothing ? UInt64(0) : tracing_clock()
-        ret = $(
-            if ABI.use_stret(rettyp)
-                # we follow Julia's ABI implementation,
-                # so ccall will handle the sret box
-                make_gcsafe(:(
-                    ccall(:objc_msgSend_stret, $rettyp,
-                          (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                          $instance, sel, $(map(esc, argvals)...))
-                ))
-            else
-                make_gcsafe(:(
-                    ccall(:objc_msgSend, $rettyp,
-                          (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                          $instance, sel, $(map(esc, argvals)...))
-                ))
-            end
-        )
-        obj_sub === nothing ||
+        if obj_sub == C_NULL
+            ret = $send
+        else
+            obj_t0 = tracing_clock()
+            ret = $send
             tracing_dispatch(obj_sub, $(QuoteNode(class_label)),
                              $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
+        end
         @static if $tracing
             if $rettyp !== Nothing
                 Core.print(io, "  ")
