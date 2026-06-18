@@ -1,5 +1,30 @@
-# Runtime, low-overhead Objective-C call tracing, using a CUPTI-style callback API.
-#
+## compile-time tracing
+
+"""
+    ObjectiveC.enable_tracing(enabled::Bool)
+
+Enable or disable ObjectiveC.jl tracing, which outputs every Objective-C call made by Julia.
+This is useful for debugging, or to collect traces for submitting bug reports.
+
+The setting is saved in a preference, so is persistent, and requires a restart of Julia to
+take effect.
+"""
+function enable_tracing(enabled::Bool)
+    prev_tracing = @load_preference("tracing", false)::Bool
+    @set_preferences!("tracing" => enabled)
+    if prev_tracing == enabled
+        @info("ObjectiveC.jl tracing setting was already `$enabled`; setting not changed.")
+    else
+        @info("ObjectiveC.jl tracing setting changed; restart your Julia session for this change to take effect!")
+    end
+    return
+end
+
+const tracing = @load_preference("tracing", false)::Bool
+
+
+## runtime tracing
+
 @public tracing_subscribe, tracing_unsubscribe, tracing_timebase
 
 # This is distinct from the compile-time `tracing` preference (which just prints every call
