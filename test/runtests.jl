@@ -792,6 +792,36 @@ end
 
 end
 
+@testset "runtime tracing" begin
+    ObjectiveC.unsubscribe()
+
+    events = []
+    callback = (class, selector, t0, t1) -> begin
+        push!(events, (class, selector, t0, t1))
+        return
+    end
+
+    @test ObjectiveC.subscribe(callback) === callback
+    String(NSString())
+    ObjectiveC.unsubscribe()
+
+    @test any(event -> event[1] === :NSString && event[2] === :string, events)
+    @test any(event -> event[2] === :UTF8String, events)
+    @test all(event -> event[3] <= event[4], events)
+    @test ObjectiveC._tracing_subscriber[] === nothing
+    @test ObjectiveC._tracing_retired_subscribers[end].callback === nothing
+
+    reentrant_events = []
+    ObjectiveC.subscribe((class, selector, t0, t1) -> begin
+        push!(reentrant_events, (class, selector))
+        String(NSString())
+        return
+    end)
+    NSString()
+    ObjectiveC.unsubscribe()
+    @test length(reentrant_events) == 1
+end
+
 @testset "tracing" begin
     ObjectiveC.enable_tracing(true)
     cmd = ```$(Base.julia_cmd()) --project=$(Base.active_project())

@@ -11,8 +11,20 @@
 # recompilation. This trades a tiny always-present cost for instant, invalidation-free
 # toggling — see the message-send codegen in `syntax.jl`.
 
-# The active subscriber, read once at every `@objc` call. `nothing` ⇒ tracing disabled.
+# The active subscriber wrapper, read once at every `@objc` call. `nothing` ⇒ tracing
+# disabled. We keep retired wrappers rooted for the session: a call site may have loaded a
+# wrapper immediately before entering the GC-safe `objc_msgSend`, and another thread may
+# unsubscribe while that call is in flight. Retaining only the tiny wrapper (with its callback
+# cleared) avoids adding rooting overhead to every traced message send.
+mutable struct _TracingSubscriber
+    callback::Any
+    retired::Bool
+end
+_TracingSubscriber(callback) = _TracingSubscriber(callback, false)
+
 const _tracing_subscriber = Ref{Any}(nothing)
+const _tracing_retired_subscribers = _TracingSubscriber[]
+const _tracing_subscriber_lock = ReentrantLock()
 
 # Monotonic clock for call timing. Returns raw `mach_absolute_time` ticks, which on Apple
 # Silicon are NOT nanoseconds (see `tracing_timebase`); convert when reporting. This shares
@@ -38,18 +50,43 @@ _maxthreadid() = isdefined(Threads, :maxthreadid) ? Threads.maxthreadid() : Thre
 # inspect an object), which would otherwise recurse. Sized at `subscribe` time.
 const _tracing_guard = Bool[]
 
+function _ensure_tracing_guard()
+    n = _maxthreadid()
+    old_n = length(_tracing_guard)
+    if old_n < n
+        resize!(_tracing_guard, n)
+        _tracing_guard[old_n+1:n] .= false
+    end
+    return
+end
+
+function _retire_tracing_subscriber(sub::_TracingSubscriber)
+    sub.callback = nothing
+    if !sub.retired
+        push!(_tracing_retired_subscribers, sub)
+        sub.retired = true
+    end
+    return
+end
+
 # Invoked (only when a subscriber is registered) around each message send. Kept out of line so
 # the inlined hot path is just the load + branch.
 @noinline function _tracing_dispatch(@nospecialize(sub), class::Symbol, sel::Symbol,
                                      t0::UInt64, t1::UInt64)
+    callback = sub.callback
+    callback === nothing && return
+
     tid = Threads.threadid()
     @inbounds if tid <= length(_tracing_guard) && !_tracing_guard[tid]
         _tracing_guard[tid] = true
         try
-            sub(class, sel, t0, t1)
+            callback(class, sel, t0, t1)
         catch err
             # a faulty callback must never take down the traced program; disable and report
-            _tracing_subscriber[] = nothing
+            lock(_tracing_subscriber_lock) do
+                _retire_tracing_subscriber(sub)
+                _tracing_subscriber[] === sub && (_tracing_subscriber[] = nothing)
+            end
             @error "ObjectiveC.jl tracing callback failed; tracing disabled" exception=(err, catch_backtrace())
         finally
             _tracing_guard[tid] = false
@@ -75,11 +112,12 @@ accumulate into a preallocated structure and defer expensive processing until af
 `unsubscribe`. A callback that throws is removed and the error reported.
 """
 function subscribe(@nospecialize(callback))
-    _tracing_subscriber[] === nothing ||
-        error("ObjectiveC.jl already has a tracing subscriber; call `unsubscribe()` first.")
-    resize!(_tracing_guard, _maxthreadid())
-    fill!(_tracing_guard, false)
-    _tracing_subscriber[] = callback
+    lock(_tracing_subscriber_lock) do
+        _tracing_subscriber[] === nothing ||
+            error("ObjectiveC.jl already has a tracing subscriber; call `unsubscribe()` first.")
+        _ensure_tracing_guard()
+        _tracing_subscriber[] = _TracingSubscriber(callback)
+    end
     return callback
 end
 
@@ -89,6 +127,12 @@ end
 Remove the active tracing subscriber registered with [`subscribe`](@ref).
 """
 function unsubscribe()
-    _tracing_subscriber[] = nothing
+    lock(_tracing_subscriber_lock) do
+        sub = _tracing_subscriber[]
+        if sub !== nothing
+            _retire_tracing_subscriber(sub)
+            _tracing_subscriber[] = nothing
+        end
+    end
     return
 end
