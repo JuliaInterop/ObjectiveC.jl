@@ -224,6 +224,29 @@ julia> String(str)
 This can be useful for submitting bug reports to upstream projects which may not be
 familiar with Julia.
 
+For programmatic profiling or integration with external tooling, ObjectiveC.jl also
+provides a runtime tracer. It can be enabled and disabled without restarting Julia:
+
+```julia-repl
+julia> events = Tuple{Symbol,Symbol,UInt64,UInt64}[]
+
+julia> ObjectiveC.tracing_subscribe() do class, selector, t_enter, t_exit
+           push!(events, (class, selector, t_enter, t_exit))
+       end
+
+julia> str = NSString("test");
+
+julia> ObjectiveC.tracing_unsubscribe()
+
+julia> ns_per_tick = ObjectiveC.tracing_timebase();
+```
+
+The callback receives the static wrapper class label, selector, and enter/exit timestamps
+from `mach_absolute_time`. Multiply timestamp differences by `tracing_timebase()` to get
+nanoseconds. Only one tracing subscriber can be active at a time. The callback runs
+synchronously on the thread making the Objective-C call, and ObjectiveC.jl suppresses
+recursive tracing if the callback itself makes Objective-C calls.
+
 
 ## Current status
 

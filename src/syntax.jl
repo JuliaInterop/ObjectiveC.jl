@@ -29,7 +29,7 @@ function flatvcat(ex::Expr)
     return flat
 end
 
-function _objc_selector_expr(msg)
+function objc_selector_expr(msg)
     if isdefined(Base, :OncePerProcess)
         name = String(msg)
         # Selector registration is idempotent and independent of class realization, so it
@@ -44,10 +44,10 @@ function _objc_selector_expr(msg)
     end
 end
 
-# a best-effort, compile-time class label for tracing: `id{MTLFoo}` → :MTLFoo,
-# a plain wrapper type → its name. Only used to annotate trace records.
-function _objc_label(typ)
-    Meta.isexpr(typ, :escape) && return _objc_label(typ.args[1])
+# A best-effort, compile-time class label for tracing: `id{MTLFoo}` becomes :MTLFoo,
+# and a plain wrapper type becomes its name. Only used to annotate trace records.
+function objc_label(typ)
+    Meta.isexpr(typ, :escape) && return objc_label(typ.args[1])
     if Meta.isexpr(typ, :curly) && typ.args[1] === :id && length(typ.args) >= 2
         inner = typ.args[2]
         Meta.isexpr(inner, :escape) && (inner = inner.args[1])
@@ -130,7 +130,7 @@ function objcm(mod, ex)
     elseif Meta.isexpr(obj, :(::))
         # instance
         value, typ = obj.args
-        label = _objc_label(typ)
+        label = objc_label(typ)
         if value isa Expr
             # possibly dealing with a nested expression, so recurse
             quote
@@ -152,14 +152,14 @@ render(io, obj) = Core.print(io, repr(obj))
 # `Object` is a UnionAll (`Object{K}`), so `id{Object}` has `T === Object` as a
 # UnionAll value without a `.name` slot. Strip to the underlying DataType where
 # possible, otherwise fall back to `nameof`.
-_type_short_name(T::DataType) = String(T.name.name)
-_type_short_name(T::UnionAll) = _type_short_name(Base.unwrap_unionall(T))
-_type_short_name(T) = string(nameof(T))
+type_short_name(T::DataType) = String(T.name.name)
+type_short_name(T::UnionAll) = type_short_name(Base.unwrap_unionall(T))
+type_short_name(T) = string(nameof(T))
 function render(io, ptr::id{T}) where T
-    Core.print(io, "(id<", _type_short_name(T), ">)0x", string(UInt(ptr), base=16, pad = Sys.WORD_SIZE>>2))
+    Core.print(io, "(id<", type_short_name(T), ">)0x", string(UInt(ptr), base=16, pad = Sys.WORD_SIZE>>2))
 end
 function render(io, ptr::Ptr{T}) where T
-    Core.print(io, "(", _type_short_name(T), "*)0x", string(UInt(ptr), base=16, pad = Sys.WORD_SIZE>>2))
+    Core.print(io, "(", type_short_name(T), "*)0x", string(UInt(ptr), base=16, pad = Sys.WORD_SIZE>>2))
 end
 ## mimic ccall's conversion
 function render_c_arg(io, obj, typ)
@@ -217,7 +217,7 @@ end
 function class_message(class_name, msg, rettyp, argtyps, argvals)
     quote
         class = Class($(String(class_name)))
-        sel = $(_objc_selector_expr(msg))
+        sel = $(objc_selector_expr(msg))
         @static if $tracing
             io = Core.stderr
             Core.print(io, "+ [", $(String(class_name)), " ", $(String(msg)))
@@ -227,9 +227,9 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
             end
             Core.println(io, "]")
         end
-        # runtime tracing hook (see tracing.jl): one relaxed load + predicted branch when off
-        _obj_sub = _tracing_subscriber[]
-        _obj_t0 = _obj_sub === nothing ? UInt64(0) : _tracing_clock()
+        # Runtime tracing hook (see tracing.jl): one global read + predicted branch when off.
+        obj_sub = tracing_subscriber[]
+        obj_t0 = obj_sub === nothing ? UInt64(0) : tracing_clock()
         ret = $(
             if ABI.use_stret(rettyp)
                 # we follow Julia's ABI implementation,
@@ -247,9 +247,9 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
                 ))
             end
         )
-        _obj_sub === nothing ||
-            _tracing_dispatch(_obj_sub, $(QuoteNode(Symbol(class_name))),
-                              $(QuoteNode(Symbol(msg))), _obj_t0, _tracing_clock())
+        obj_sub === nothing ||
+            tracing_dispatch(obj_sub, $(QuoteNode(Symbol(class_name))),
+                             $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
         @static if $tracing
             if $rettyp !== Nothing
                 Core.print(io, "  ")
@@ -264,7 +264,7 @@ end
 function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_label=:id)
     # TODO: use the instance type `typ` to verify when in validation mode?
     quote
-        sel = $(_objc_selector_expr(msg))
+        sel = $(objc_selector_expr(msg))
         @static if $tracing
             io = Core.stderr
             Core.print(io, "- [")
@@ -276,9 +276,9 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_la
             end
             Core.println(io, "]")
         end
-        # runtime tracing hook (see tracing.jl): one relaxed load + predicted branch when off
-        _obj_sub = _tracing_subscriber[]
-        _obj_t0 = _obj_sub === nothing ? UInt64(0) : _tracing_clock()
+        # Runtime tracing hook (see tracing.jl): one global read + predicted branch when off.
+        obj_sub = tracing_subscriber[]
+        obj_t0 = obj_sub === nothing ? UInt64(0) : tracing_clock()
         ret = $(
             if ABI.use_stret(rettyp)
                 # we follow Julia's ABI implementation,
@@ -296,9 +296,9 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_la
                 ))
             end
         )
-        _obj_sub === nothing ||
-            _tracing_dispatch(_obj_sub, $(QuoteNode(class_label)),
-                              $(QuoteNode(Symbol(msg))), _obj_t0, _tracing_clock())
+        obj_sub === nothing ||
+            tracing_dispatch(obj_sub, $(QuoteNode(class_label)),
+                             $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
         @static if $tracing
             if $rettyp !== Nothing
                 Core.print(io, "  ")
