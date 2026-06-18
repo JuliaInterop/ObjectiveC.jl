@@ -1,7 +1,7 @@
-export tracing_subscribe, tracing_unsubscribe, tracing_timebase
-
 # Runtime, low-overhead Objective-C call tracing, using a CUPTI-style callback API.
 #
+@public tracing_subscribe, tracing_unsubscribe, tracing_timebase
+
 # This is distinct from the compile-time `tracing` preference (which just prints every call
 # to stderr for debugging). Here a consumer registers a callback at runtime, and it is
 # invoked for every Objective-C message send with the class and selector - both

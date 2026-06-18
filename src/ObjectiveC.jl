@@ -1,5 +1,7 @@
 module ObjectiveC
 
+include("public.jl")
+
 using CEnum
 
 using Preferences
