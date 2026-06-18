@@ -4,40 +4,29 @@ using CEnum
 
 using Preferences
 
-"""
-    ObjectiveC.enable_tracing(enabled::Bool)
-
-Enable or disable ObjectiveC.jl tracing, which outputs every Objective-C call made by Julia.
-This is useful for debugging, or to collect traces for submitting bug reports.
-
-The setting is saved in a preference, so is persistent, and requires a restart of Julia to
-take effect.
-"""
-function enable_tracing(enabled::Bool)
-    prev_tracing = @load_preference("tracing", false)::Bool
-    @set_preferences!("tracing" => enabled)
-    if prev_tracing == enabled
-        @info("ObjectiveC.jl tracing setting was already `$enabled`; setting not changed.")
+macro public(names)
+    @static if VERSION >= v"1.11"
+        syms = names isa Symbol ? (names,) :
+               Meta.isexpr(names, :tuple) ? names.args :
+               error("@public expects a symbol or a comma-separated list of symbols")
+        return esc(Expr(:public, syms...))
     else
-        @info("ObjectiveC.jl tracing setting changed; restart your Julia session for this change to take effect!")
+        return nothing
     end
-    return
 end
-const tracing = @load_preference("tracing", false)::Bool
 
 # Types & Reflection
 include("primitives.jl")
 include("methods.jl")
 
-# Get macOS and Darwin version
-include("version.jl")
-
 # Calls & Properties
 include("abi.jl")
 include("availability.jl")
 include("syntax.jl")
+include("tracing.jl")
 
 # API wrappers
+include("version.jl")
 include("foundation.jl")
 include("core_foundation.jl")
 include("dispatch.jl")
