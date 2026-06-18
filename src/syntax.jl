@@ -44,6 +44,21 @@ function _objc_selector_expr(msg)
     end
 end
 
+# a best-effort, compile-time class label for tracing: `id{MTLFoo}` → :MTLFoo,
+# a plain wrapper type → its name. Only used to annotate trace records.
+function _objc_label(typ)
+    Meta.isexpr(typ, :escape) && return _objc_label(typ.args[1])
+    if Meta.isexpr(typ, :curly) && typ.args[1] === :id && length(typ.args) >= 2
+        inner = typ.args[2]
+        Meta.isexpr(inner, :escape) && (inner = inner.args[1])
+        return inner isa Symbol ? inner : Symbol(string(inner))
+    elseif typ isa Symbol
+        return typ
+    else
+        return Symbol(string(typ))
+    end
+end
+
 function objcm(mod, ex)
     # handle a single call, [dst method: param::typ]::typ
 
@@ -115,14 +130,15 @@ function objcm(mod, ex)
     elseif Meta.isexpr(obj, :(::))
         # instance
         value, typ = obj.args
+        label = _objc_label(typ)
         if value isa Expr
             # possibly dealing with a nested expression, so recurse
             quote
                 obj = $(objcm(mod, obj))
-                $(instance_message(:obj, esc(typ), sel, rettyp, argtyps, argvals))
+                $(instance_message(:obj, esc(typ), sel, rettyp, argtyps, argvals, label))
             end
         else
-            instance_message(esc(value), esc(typ), sel, rettyp, argtyps, argvals)
+            instance_message(esc(value), esc(typ), sel, rettyp, argtyps, argvals, label)
         end
     else
         callerror("object must be a class or typed instance")
@@ -211,6 +227,9 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
             end
             Core.println(io, "]")
         end
+        # runtime tracing hook (see tracing.jl): one relaxed load + predicted branch when off
+        _obj_sub = _tracing_subscriber[]
+        _obj_t0 = _obj_sub === nothing ? UInt64(0) : _tracing_clock()
         ret = $(
             if ABI.use_stret(rettyp)
                 # we follow Julia's ABI implementation,
@@ -228,6 +247,9 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
                 ))
             end
         )
+        _obj_sub === nothing ||
+            _tracing_dispatch(_obj_sub, $(QuoteNode(Symbol(class_name))),
+                              $(QuoteNode(Symbol(msg))), _obj_t0, _tracing_clock())
         @static if $tracing
             if $rettyp !== Nothing
                 Core.print(io, "  ")
@@ -239,7 +261,7 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
     end
 end
 
-function instance_message(instance, typ, msg, rettyp, argtyps, argvals)
+function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_label=:id)
     # TODO: use the instance type `typ` to verify when in validation mode?
     quote
         sel = $(_objc_selector_expr(msg))
@@ -254,6 +276,9 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals)
             end
             Core.println(io, "]")
         end
+        # runtime tracing hook (see tracing.jl): one relaxed load + predicted branch when off
+        _obj_sub = _tracing_subscriber[]
+        _obj_t0 = _obj_sub === nothing ? UInt64(0) : _tracing_clock()
         ret = $(
             if ABI.use_stret(rettyp)
                 # we follow Julia's ABI implementation,
@@ -271,6 +296,9 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals)
                 ))
             end
         )
+        _obj_sub === nothing ||
+            _tracing_dispatch(_obj_sub, $(QuoteNode(class_label)),
+                              $(QuoteNode(Symbol(msg))), _obj_t0, _tracing_clock())
         @static if $tracing
             if $rettyp !== Nothing
                 Core.print(io, "  ")

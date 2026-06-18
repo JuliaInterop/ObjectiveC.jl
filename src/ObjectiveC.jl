@@ -36,6 +36,7 @@ include("version.jl")
 include("abi.jl")
 include("availability.jl")
 include("syntax.jl")
+include("tracing.jl")
 
 # API wrappers
 include("foundation.jl")
