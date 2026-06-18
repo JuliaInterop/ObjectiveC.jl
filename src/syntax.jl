@@ -29,6 +29,21 @@ function flatvcat(ex::Expr)
     return flat
 end
 
+function _objc_selector_expr(msg)
+    if isdefined(Base, :OncePerProcess)
+        name = String(msg)
+        # Selector registration is idempotent and independent of class realization, so it
+        # is safe to cache per process. Class lookup is different: `objc_getClass` can fail
+        # before a framework is loaded and succeed later, so do not mirror this for classes.
+        once = Base.OncePerProcess{Selector}() do
+            Selector(name)
+        end
+        return :(($once)())
+    else
+        return :(Selector($(String(msg))))
+    end
+end
+
 function objcm(mod, ex)
     # handle a single call, [dst method: param::typ]::typ
 
@@ -186,7 +201,7 @@ end
 function class_message(class_name, msg, rettyp, argtyps, argvals)
     quote
         class = Class($(String(class_name)))
-        sel = Selector($(String(msg)))
+        sel = $(_objc_selector_expr(msg))
         @static if $tracing
             io = Core.stderr
             Core.print(io, "+ [", $(String(class_name)), " ", $(String(msg)))
@@ -227,7 +242,7 @@ end
 function instance_message(instance, typ, msg, rettyp, argtyps, argvals)
     # TODO: use the instance type `typ` to verify when in validation mode?
     quote
-        sel = Selector($(String(msg)))
+        sel = $(_objc_selector_expr(msg))
         @static if $tracing
             io = Core.stderr
             Core.print(io, "- [")
