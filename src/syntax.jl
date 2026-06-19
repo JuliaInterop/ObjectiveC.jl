@@ -183,13 +183,12 @@ function render_c_arg(io, obj, typ)
     end
 end
 
-# ensure that the GC can run during a ccall. this is only safe if callbacks
-# into Julia transition back to GC-unsafe, which is the case on Julia 1.10+.
+# ensure that the GC can run during a ccall on Julia 1.10/1.11. this is only
+# safe if callbacks into Julia transition back to GC-unsafe, which is the case
+# on Julia 1.10+.
 #
 # doing so is tricky, because no GC operations are allowed after the transition,
 # meaning we have to do our own argument conversion instead of relying on ccall.
-#
-# TODO: replace with JuliaLang/julia#49933 once merged
 function make_gcsafe(ex)
     # decode the ccall
     if !Meta.isexpr(ex, :call) || ex.args[1] != :ccall
@@ -228,22 +227,26 @@ function make_gcsafe(ex)
     return code
 end
 
-function class_message(class_name, msg, rettyp, argtyps, argvals)
-    send = if ABI.use_stret(rettyp)
-        # we follow Julia's ABI implementation,
-        # so ccall will handle the sret box
-        make_gcsafe(:(
-            ccall(:objc_msgSend_stret, $rettyp,
-                  (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                  class, sel, $(map(esc, argvals)...))
-        ))
+function emit_msgsend(receiver, receiver_typ, rettyp, argtyps, argvals)
+    msgsend_fn = ABI.use_stret(rettyp) ? :objc_msgSend_stret : :objc_msgSend
+    vals = Any[receiver, :sel, map(esc, argvals)...]
+    typs = Any[receiver_typ, :(Ptr{Cvoid}), map(esc, argtyps)...]
+
+    @static if VERSION >= v"1.12"
+        argpairs = Any[Expr(:(::), val, typ) for (val, typ) in zip(vals, typs)]
+        return Expr(:macrocall, GlobalRef(Base, Symbol("@ccall")),
+                    LineNumberNode(0, :none),
+                    Expr(:(=), :gc_safe, true),
+                    Expr(:(::), Expr(:call, msgsend_fn, argpairs...), rettyp))
     else
-        make_gcsafe(:(
-            ccall(:objc_msgSend, $rettyp,
-                  (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                  class, sel, $(map(esc, argvals)...))
-        ))
+        return make_gcsafe(Expr(:call, :ccall, QuoteNode(msgsend_fn), rettyp,
+                                Expr(:tuple, typs...), vals...))
     end
+end
+
+function class_message(class_name, msg, rettyp, argtyps, argvals)
+    # We follow Julia's ABI implementation, so ccall/@ccall will handle the sret box.
+    send = emit_msgsend(:class, :(Ptr{Cvoid}), rettyp, argtyps, argvals)
 
     quote
         class = $(objc_class_expr(class_name))
@@ -280,21 +283,8 @@ end
 
 function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_label=:id)
     # TODO: use the instance type `typ` to verify when in validation mode?
-    send = if ABI.use_stret(rettyp)
-        # we follow Julia's ABI implementation,
-        # so ccall will handle the sret box
-        make_gcsafe(:(
-            ccall(:objc_msgSend_stret, $rettyp,
-                  (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                  $instance, sel, $(map(esc, argvals)...))
-        ))
-    else
-        make_gcsafe(:(
-            ccall(:objc_msgSend, $rettyp,
-                  (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                  $instance, sel, $(map(esc, argvals)...))
-        ))
-    end
+    # We follow Julia's ABI implementation, so ccall/@ccall will handle the sret box.
+    send = emit_msgsend(instance, :(id{Object}), rettyp, argtyps, argvals)
 
     quote
         sel = $(objc_selector_expr(msg))
