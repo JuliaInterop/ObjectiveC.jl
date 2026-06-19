@@ -239,11 +239,15 @@ function emit_msgsend(receiver, receiver_typ, rettyp, argtyps, argvals)
     end
 end
 
+# `@objc` is often the whole body of tiny wrapper/property methods. The inline
+# gc-safe transition enlarged that body enough to miss the inliner in loops, so
+# mark the generated expression inline while keeping the traced send emitted once.
 function class_message(class_name, msg, rettyp, argtyps, argvals)
     # We follow Julia's ABI implementation, so ccall/@ccall will handle the sret box.
     send = emit_msgsend(:class, :(Ptr{Cvoid}), rettyp, argtyps, argvals)
 
     quote
+        $(Expr(:meta, :inline))
         class = $(objc_class_expr(class_name))
         sel = $(objc_selector_expr(msg))
         @static if $tracing
@@ -257,14 +261,10 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
         end
         # Runtime tracing hook (see tracing.jl): one global read + predicted branch when off.
         obj_sub = tracing_subscriber[]
-        if obj_sub == C_NULL
-            ret = $send
-        else
-            obj_t0 = tracing_clock()
-            ret = $send
-            tracing_dispatch(obj_sub, $(QuoteNode(Symbol(class_name))),
-                             $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
-        end
+        obj_t0 = obj_sub == C_NULL ? UInt64(0) : tracing_clock()
+        ret = $send
+        obj_sub == C_NULL || tracing_dispatch(obj_sub, $(QuoteNode(Symbol(class_name))),
+                                              $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
         @static if $tracing
             if $rettyp !== Nothing
                 Core.print(io, "  ")
@@ -282,6 +282,7 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_la
     send = emit_msgsend(instance, :(id{Object}), rettyp, argtyps, argvals)
 
     quote
+        $(Expr(:meta, :inline))
         sel = $(objc_selector_expr(msg))
         @static if $tracing
             io = Core.stderr
@@ -296,14 +297,10 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_la
         end
         # Runtime tracing hook (see tracing.jl): one global read + predicted branch when off.
         obj_sub = tracing_subscriber[]
-        if obj_sub == C_NULL
-            ret = $send
-        else
-            obj_t0 = tracing_clock()
-            ret = $send
-            tracing_dispatch(obj_sub, $(QuoteNode(class_label)),
-                             $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
-        end
+        obj_t0 = obj_sub == C_NULL ? UInt64(0) : tracing_clock()
+        ret = $send
+        obj_sub == C_NULL || tracing_dispatch(obj_sub, $(QuoteNode(class_label)),
+                                              $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
         @static if $tracing
             if $rettyp !== Nothing
                 Core.print(io, "  ")
