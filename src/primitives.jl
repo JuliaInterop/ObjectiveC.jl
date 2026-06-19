@@ -174,6 +174,10 @@ Base.:(==)(x::id, y::id) = Base.bitcast(UInt, x) == Base.bitcast(UInt, y)
 Base.:(==)(x::id, y::Ptr) = throw(ArgumentError("Cannot compare id with Ptr"))
 Base.:(==)(x::Ptr, y::id) = throw(ArgumentError("Cannot compare id with Ptr"))
 
+# hash by the pointer bits, consistently with `==`. without this, `id` falls back to the
+# generic `objectid` hash, which is slow for `id`-keyed `Dict`s on a hot path.
+Base.hash(x::id, h::UInt) = hash(Base.bitcast(UInt, x), h)
+
 # conversion between pointers: refuse to convert between unrelated types
 function Base.convert(::Type{id{T}}, x::id{U}) where {T,U}
     # `nil` is an exception (we want to use it in `@objc` slots directly).
