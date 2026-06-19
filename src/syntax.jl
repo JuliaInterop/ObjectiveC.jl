@@ -30,17 +30,12 @@ function flatvcat(ex::Expr)
 end
 
 function objc_selector_expr(msg)
-    if isdefined(Base, :OncePerProcess)
-        name = String(msg)
-        # Selector registration is idempotent and independent of class realization, so it
-        # is safe to cache per process. Class lookup is different: `objc_getClass` can fail
-        # before a framework is loaded and succeed later, so do not mirror this for classes.
-        once = Base.OncePerProcess{Selector}() do
-            Selector(name)
-        end
-        return :(($once)())
+    name = String(msg)
+    @static if VERSION >= v"1.12"
+        ref = SelRef(name)
+        return :(($ref)())
     else
-        return :(Selector($(String(msg))))
+        return :(Selector($name))
     end
 end
 

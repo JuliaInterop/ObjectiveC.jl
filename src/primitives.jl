@@ -16,11 +16,34 @@ end
 
 Base.unsafe_convert(::Type{Ptr{Cvoid}}, sel::Selector) = sel.ptr
 
+selptr(name) = ccall(:sel_registerName, Ptr{Cvoid}, (Ptr{Cchar},), name)
+
 function Selector(name)
-    Selector(ccall(:sel_registerName, Ptr{Cvoid}, (Ptr{Cchar},), name))
+    Selector(selptr(name))
 end
 
 @static if VERSION >= v"1.12"
+    mutable struct SelRef
+        @atomic ptr::Ptr{Cvoid}
+        const name::String
+
+        function SelRef(name::String)
+            ref = new(C_NULL, name)
+            ccall(:jl_set_precompile_field_replace, Cvoid, (Any, Any, Any),
+                  ref, :ptr, C_NULL)
+            return ref
+        end
+    end
+
+    @inline function (ref::SelRef)()
+        ptr = @atomic :monotonic ref.ptr
+        if ptr == C_NULL
+            ptr = selptr(ref.name)
+            @atomic :monotonic ref.ptr = ptr
+        end
+        return ptr
+    end
+
     mutable struct ClassRef
         @atomic ptr::Ptr{Cvoid}
         const name::String
@@ -36,7 +59,7 @@ end
     @inline function (ref::ClassRef)()
         ptr = @atomic :monotonic ref.ptr
         if ptr == C_NULL
-            ptr = classptr(ref.name)
+            ptr = ccall(:objc_getClass, Ptr{Cvoid}, (Ptr{Cchar},), ref.name)
             ptr != C_NULL && (@atomic :monotonic ref.ptr = ptr)
         end
         return ptr
