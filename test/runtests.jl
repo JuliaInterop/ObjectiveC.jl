@@ -120,6 +120,11 @@ end
 
     # chained class + instance calls
     @objc [[NSString alloc]::id{Object} init]::id{Object}
+
+    @test_throws "Couldn't find class ObjectiveCClassCacheRetry" (@objc [ObjectiveCClassCacheRetry new]::id{Object})
+    ObjectiveC.createclass(:ObjectiveCClassCacheRetry, Class(:NSObject))
+    retry_obj = @objc [ObjectiveCClassCacheRetry new]::id{Object}
+    @test retry_obj != nil
 end
 
 @objcwrapper TestNSString <: Object

@@ -30,17 +30,26 @@ function flatvcat(ex::Expr)
 end
 
 function objc_selector_expr(msg)
-    if isdefined(Base, :OncePerProcess)
-        name = String(msg)
-        # Selector registration is idempotent and independent of class realization, so it
-        # is safe to cache per process. Class lookup is different: `objc_getClass` can fail
-        # before a framework is loaded and succeed later, so do not mirror this for classes.
-        once = Base.OncePerProcess{Selector}() do
-            Selector(name)
-        end
-        return :(($once)())
+    name = String(msg)
+    @static if VERSION >= v"1.12"
+        ref = SelRef(name)
+        return :(($ref)())
     else
-        return :(Selector($(String(msg))))
+        return :(Selector($name))
+    end
+end
+
+function objc_class_expr(class_name)
+    name = String(class_name)
+    @static if VERSION >= v"1.12"
+        ref = ClassRef(name)
+        return quote
+            class = ($ref)()
+            class == C_NULL && error($("Couldn't find class $name"))
+            class
+        end
+    else
+        return :(Class($name))
     end
 end
 
@@ -169,13 +178,12 @@ function render_c_arg(io, obj, typ)
     end
 end
 
-# ensure that the GC can run during a ccall. this is only safe if callbacks
-# into Julia transition back to GC-unsafe, which is the case on Julia 1.10+.
+# ensure that the GC can run during a ccall on Julia 1.10/1.11. this is only
+# safe if callbacks into Julia transition back to GC-unsafe, which is the case
+# on Julia 1.10+.
 #
 # doing so is tricky, because no GC operations are allowed after the transition,
 # meaning we have to do our own argument conversion instead of relying on ccall.
-#
-# TODO: replace with JuliaLang/julia#49933 once merged
 function make_gcsafe(ex)
     # decode the ccall
     if !Meta.isexpr(ex, :call) || ex.args[1] != :ccall
@@ -214,25 +222,33 @@ function make_gcsafe(ex)
     return code
 end
 
-function class_message(class_name, msg, rettyp, argtyps, argvals)
-    send = if ABI.use_stret(rettyp)
-        # we follow Julia's ABI implementation,
-        # so ccall will handle the sret box
-        make_gcsafe(:(
-            ccall(:objc_msgSend_stret, $rettyp,
-                  (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                  class, sel, $(map(esc, argvals)...))
-        ))
+function emit_msgsend(receiver, receiver_typ, rettyp, argtyps, argvals)
+    msgsend_fn = ABI.use_stret(rettyp) ? :objc_msgSend_stret : :objc_msgSend
+    vals = Any[receiver, :sel, map(esc, argvals)...]
+    typs = Any[receiver_typ, :(Ptr{Cvoid}), map(esc, argtyps)...]
+
+    @static if VERSION >= v"1.12"
+        argpairs = Any[Expr(:(::), val, typ) for (val, typ) in zip(vals, typs)]
+        return Expr(:macrocall, GlobalRef(Base, Symbol("@ccall")),
+                    LineNumberNode(0, :none),
+                    Expr(:(=), :gc_safe, true),
+                    Expr(:(::), Expr(:call, msgsend_fn, argpairs...), rettyp))
     else
-        make_gcsafe(:(
-            ccall(:objc_msgSend, $rettyp,
-                  (Ptr{Cvoid}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                  class, sel, $(map(esc, argvals)...))
-        ))
+        return make_gcsafe(Expr(:call, :ccall, QuoteNode(msgsend_fn), rettyp,
+                                Expr(:tuple, typs...), vals...))
     end
+end
+
+# `@objc` is often the whole body of tiny wrapper/property methods. The inline
+# gc-safe transition enlarged that body enough to miss the inliner in loops, so
+# mark the generated expression inline while keeping the traced send emitted once.
+function class_message(class_name, msg, rettyp, argtyps, argvals)
+    # We follow Julia's ABI implementation, so ccall/@ccall will handle the sret box.
+    send = emit_msgsend(:class, :(Ptr{Cvoid}), rettyp, argtyps, argvals)
 
     quote
-        class = Class($(String(class_name)))
+        $(Expr(:meta, :inline))
+        class = $(objc_class_expr(class_name))
         sel = $(objc_selector_expr(msg))
         @static if $tracing
             io = Core.stderr
@@ -245,14 +261,10 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
         end
         # Runtime tracing hook (see tracing.jl): one global read + predicted branch when off.
         obj_sub = tracing_subscriber[]
-        if obj_sub == C_NULL
-            ret = $send
-        else
-            obj_t0 = tracing_clock()
-            ret = $send
-            tracing_dispatch(obj_sub, $(QuoteNode(Symbol(class_name))),
-                             $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
-        end
+        obj_t0 = obj_sub == C_NULL ? UInt64(0) : tracing_clock()
+        ret = $send
+        obj_sub == C_NULL || tracing_dispatch(obj_sub, $(QuoteNode(Symbol(class_name))),
+                                              $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
         @static if $tracing
             if $rettyp !== Nothing
                 Core.print(io, "  ")
@@ -266,23 +278,11 @@ end
 
 function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_label=:id)
     # TODO: use the instance type `typ` to verify when in validation mode?
-    send = if ABI.use_stret(rettyp)
-        # we follow Julia's ABI implementation,
-        # so ccall will handle the sret box
-        make_gcsafe(:(
-            ccall(:objc_msgSend_stret, $rettyp,
-                  (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                  $instance, sel, $(map(esc, argvals)...))
-        ))
-    else
-        make_gcsafe(:(
-            ccall(:objc_msgSend, $rettyp,
-                  (id{Object}, Ptr{Cvoid}, $(map(esc, argtyps)...)),
-                  $instance, sel, $(map(esc, argvals)...))
-        ))
-    end
+    # We follow Julia's ABI implementation, so ccall/@ccall will handle the sret box.
+    send = emit_msgsend(instance, :(id{Object}), rettyp, argtyps, argvals)
 
     quote
+        $(Expr(:meta, :inline))
         sel = $(objc_selector_expr(msg))
         @static if $tracing
             io = Core.stderr
@@ -297,14 +297,10 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_la
         end
         # Runtime tracing hook (see tracing.jl): one global read + predicted branch when off.
         obj_sub = tracing_subscriber[]
-        if obj_sub == C_NULL
-            ret = $send
-        else
-            obj_t0 = tracing_clock()
-            ret = $send
-            tracing_dispatch(obj_sub, $(QuoteNode(class_label)),
-                             $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
-        end
+        obj_t0 = obj_sub == C_NULL ? UInt64(0) : tracing_clock()
+        ret = $send
+        obj_sub == C_NULL || tracing_dispatch(obj_sub, $(QuoteNode(class_label)),
+                                              $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
         @static if $tracing
             if $rettyp !== Nothing
                 Core.print(io, "  ")
