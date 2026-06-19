@@ -20,6 +20,29 @@ function Selector(name)
     Selector(ccall(:sel_registerName, Ptr{Cvoid}, (Ptr{Cchar},), name))
 end
 
+@static if VERSION >= v"1.12"
+    mutable struct ClassRef
+        @atomic ptr::Ptr{Cvoid}
+        const name::String
+
+        function ClassRef(name::String)
+            ref = new(C_NULL, name)
+            ccall(:jl_set_precompile_field_replace, Cvoid, (Any, Any, Any),
+                  ref, :ptr, C_NULL)
+            return ref
+        end
+    end
+
+    @inline function (ref::ClassRef)()
+        ptr = @atomic :monotonic ref.ptr
+        if ptr == C_NULL
+            ptr = classptr(ref.name)
+            ptr != C_NULL && (@atomic :monotonic ref.ptr = ptr)
+        end
+        return ptr
+    end
+end
+
 macro sel_str(name)
     Selector(name)
 end

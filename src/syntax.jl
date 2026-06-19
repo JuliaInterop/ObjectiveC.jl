@@ -44,6 +44,20 @@ function objc_selector_expr(msg)
     end
 end
 
+function objc_class_expr(class_name)
+    name = String(class_name)
+    @static if VERSION >= v"1.12"
+        ref = ClassRef(name)
+        return quote
+            class = ($ref)()
+            class == C_NULL && error($("Couldn't find class $name"))
+            class
+        end
+    else
+        return :(Class($name))
+    end
+end
+
 # A best-effort, compile-time class label for tracing: `id{MTLFoo}` becomes :MTLFoo,
 # and a plain wrapper type becomes its name. Only used to annotate trace records.
 function objc_label(typ)
@@ -232,7 +246,7 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
     end
 
     quote
-        class = Class($(String(class_name)))
+        class = $(objc_class_expr(class_name))
         sel = $(objc_selector_expr(msg))
         @static if $tracing
             io = Core.stderr
