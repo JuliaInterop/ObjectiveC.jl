@@ -394,6 +394,60 @@ open_pair(a::TestNSStringLike, b::TestNSOperationQueueLike) =
 end
 
 using .Foundation
+
+@objcwrapper managed = true TestManagedNSObject <: NSObject
+
+function owned_object_ptr()
+    @objc [NSObject new]::id{TestManagedNSObject}
+end
+
+function borrowed_object_ptr()
+    ptr = owned_object_ptr()
+    @objc [ptr::id{TestManagedNSObject} autorelease]::id{TestManagedNSObject}
+end
+
+function retain_with_hook_managed_test(ptr)
+    obj = retain(TestManagedNSObject, ptr)
+    finalize(obj)
+    return nothing
+end
+
+@testset "managed wrappers" begin
+    @test_throws "unrecognized keyword argument: immutable" macroexpand(
+        @__MODULE__, :(@objcwrapper immutable = false TestOldKeyword <: NSObject))
+    @test Base.ismutabletype(TestManagedNSObject)
+
+    ptr = owned_object_ptr()
+    raw = TestManagedNSObject(ptr)
+    count = raw.retainCount
+    obj = adopt(TestManagedNSObject, ptr)
+    @test obj.retainCount == count
+    finalize(obj)
+
+    ptr = borrowed_object_ptr()
+    raw = TestManagedNSObject(ptr)
+    count = raw.retainCount
+    obj = retain(TestManagedNSObject, ptr)
+    @test obj.retainCount == count + 1
+    @test obj == raw
+    @test hash(obj) == hash(raw)
+    finalize(obj)
+    @test raw.retainCount == count
+
+    hook_calls = Ref(0)
+    old_hook = set_managed_release!(obj -> begin
+        hook_calls[] += 1
+        release(obj)
+    end)
+    try
+        ptr = borrowed_object_ptr()
+        retain_with_hook_managed_test(ptr)
+        @test hook_calls[] == 1
+    finally
+        set_managed_release!(old_hook)
+    end
+end
+
 @testset "foundation" begin
 
 @testset "NSAutoReleasePool" begin

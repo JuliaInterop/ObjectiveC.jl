@@ -3,8 +3,9 @@ export @objc, @objcwrapper, @objcproperties, @objcblock
 
 # `Object` is parameterized by its `Kind` (declared in primitives.jl). Each
 # `@objcwrapper Foo <: Bar` emits an abstract `FooKind <: BarKind`, a concrete
-# `struct Foo <: Object{FooKind}`, and a `const FooLike = Object{<:FooKind}`
-# alias. Polymorphic methods are written `f(x::FooLike) = …` — ordinary Julia
+# `struct Foo <: Object{FooKind}` (or `mutable struct` for managed wrappers),
+# and a `const FooLike = Object{<:FooKind}` alias. Polymorphic methods are
+# written `f(x::FooLike) = …` — ordinary Julia
 # subtyping then matches `Foo` and every wrapped subclass.
 
 # `objc_parent` walks the wrapper hierarchy for `@objcproperties`'s property
@@ -332,7 +333,7 @@ Each declaration generates three names:
   * an abstract `nameKind <: superKind` in a parallel lattice mirroring the
     ObjC class hierarchy;
   * a concrete `struct name <: Object{nameKind}` (or `mutable struct` when
-    `immutable=false`) holding a single `ptr::id{name}` field;
+    `managed=true`) holding a single `ptr::id{name}` field;
   * a `const nameLike = Object{<:nameKind}` alias for use in polymorphic
     method signatures (not exported — it's a tool for writing methods, not
     part of the user-facing API).
@@ -350,13 +351,16 @@ or when you specifically want to refuse them.
 
 Keyword arguments:
 
-  * `immutable`: if `true` (default), define the wrapper as an immutable struct.
-    Should be disabled when you want to attach finalizers (e.g., for objects
-    that need explicit `release`).
+  * `managed`: if `true`, define the wrapper as a mutable struct that can
+    participate in explicit Objective-C ownership via `adopt(T, ptr)` and
+    `retain(T, ptr)`. The bare `T(ptr)` constructor never takes ownership or
+    attaches a finalizer; creation sites must choose `adopt` for +1 pointers
+    from `new`/`alloc`/`copy`/`mutableCopy` families, or `retain` for borrowed
+    +0 pointers.
   * `availability`: a `PlatformAvailability` describing the OS/version
     availability of the class.
-  * `comparison`: if `true` (default `false`), define `==` and `hash` for the
-    wrapper class. Mostly useful for `mutable struct` wrappers.
+  * `comparison`: if `true` (default `managed`), define `==` and `hash` for the
+    wrapper class.
 """
 macro objcwrapper(ex...)
     def = ex[end]
@@ -364,7 +368,7 @@ macro objcwrapper(ex...)
 
     # parse kwargs
     comparison = nothing
-    immutable = nothing
+    managed = nothing
     availability = nothing
     for kw in kwargs
         if kw isa Expr && kw.head == :(=)
@@ -372,9 +376,9 @@ macro objcwrapper(ex...)
             if kw == :comparison
                 value isa Bool || wrappererror("comparison keyword argument must be a literal boolean")
                 comparison = value
-            elseif kw == :immutable
-                value isa Bool || wrappererror("immutable keyword argument must be a literal boolean")
-                immutable = value
+            elseif kw == :managed
+                value isa Bool || wrappererror("managed keyword argument must be a literal boolean")
+                managed = value
             elseif kw == :availability
                 availability = get_avail_exprs(__module__, value)
             else
@@ -384,8 +388,8 @@ macro objcwrapper(ex...)
             wrappererror("invalid keyword argument: $kw")
         end
     end
-    immutable = something(immutable, true)
-    comparison = something(comparison, !immutable)
+    managed = something(managed, false)
+    comparison = something(comparison, managed)
     availability = something(availability, PlatformAvailability[])
 
     # parse class definition
@@ -409,40 +413,23 @@ macro objcwrapper(ex...)
     likename = Symbol(name, "Like")
 
     # define the concrete struct. The constructor checks availability and rejects nil.
-    structdef = if immutable
-        quote
-            struct $name <: $ObjectiveC.Object{$kindname}
-                ptr::$ObjectiveC.id{$name}
-                function $name(ptr::$ObjectiveC.id)
-                    @static if !$ObjectiveC.is_available($availability)
-                        throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
-                    end
-                    ptr == $ObjectiveC.nil && throw(UndefRefError())
-                    new(ptr)
-                end
+    structdef = Expr(:struct, managed, :($name <: $ObjectiveC.Object{$kindname}), quote
+        ptr::$ObjectiveC.id{$name}
+        function $name(ptr::$ObjectiveC.id)
+            @static if !$ObjectiveC.is_available($availability)
+                throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
             end
+            ptr == $ObjectiveC.nil && throw(UndefRefError())
+            new(ptr)
         end
-    else
-        quote
-            mutable struct $name <: $ObjectiveC.Object{$kindname}
-                ptr::$ObjectiveC.id{$name}
-                function $name(ptr::$ObjectiveC.id)
-                    @static if !$ObjectiveC.is_available($availability)
-                        throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
-                    end
-                    ptr == $ObjectiveC.nil && throw(UndefRefError())
-                    new(ptr)
-                end
-            end
-        end
-    end
+    end)
 
     ex = quote
         # Kind has to come *before* the struct definition so the supertype
         # clause `Object{$kindname}` can resolve it.
         abstract type $kindname <: $ObjectiveC.classkind($super) end
 
-        $(structdef.args...)
+        $structdef
 
         # Polymorphic alias: `Object{<:$kindname}` matches the concrete leaf
         # and every wrapped subclass via native Julia subtyping. Not

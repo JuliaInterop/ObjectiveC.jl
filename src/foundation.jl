@@ -18,7 +18,8 @@ const NSIntegerMax = typemax(NSInteger)
 const NSUIntegerMax = typemax(NSUInteger)
 
 
-export NSObject, retain, release, autorelease, is_kind_of
+export NSObject, retain, release, autorelease, is_kind_of, adopt,
+       managed_release, set_managed_release!
 
 @objcwrapper NSObject <: Object
 
@@ -52,6 +53,76 @@ retain(obj::NSObjectLike) =
 
 is_kind_of(obj::NSObjectLike, class::Class) =
     @objc [obj::id{NSObject} isKindOfClass:class::Class]::Bool
+
+const managed_release_hook = Ref{Any}(nothing)
+
+"""
+    managed_release(obj)
+
+Release a managed Objective-C wrapper from a Julia finalizer. Packages that need
+extra finalizer-time behavior, such as installing an autorelease pool, can
+override the process-wide hook with [`set_managed_release!`](@ref).
+"""
+function managed_release(obj::NSObjectLike)
+    hook = managed_release_hook[]
+    if hook === nothing
+        release(obj)
+    else
+        hook(obj)
+    end
+    return nothing
+end
+
+"""
+    set_managed_release!(f)
+
+Set the function used by managed wrapper finalizers and return the previous hook.
+The hook is called as `f(obj)`. Passing `nothing` restores the default `release`.
+"""
+function set_managed_release!(f)
+    (f === nothing || f isa Base.Callable) ||
+        throw(ArgumentError("managed release hook must be callable or `nothing`"))
+    old = managed_release_hook[]
+    managed_release_hook[] = f
+    return old
+end
+
+function check_managed_type(::Type{T}) where {T<:NSObjectLike}
+    Base.ismutabletype(T) ||
+        throw(ArgumentError("$T is not managed; declare it with `@objcwrapper managed=true`"))
+    return nothing
+end
+
+function attach_managed_finalizer(obj::NSObjectLike)
+    finalizer(managed_release, obj)
+    return obj
+end
+
+"""
+    adopt(T, ptr)
+
+Wrap a +1 Objective-C object pointer, such as a result from a `new`, `alloc`,
+`copy`, or `mutableCopy` family method, and release it from a Julia finalizer.
+This does not retain the object. The bare `T(ptr)` constructor is non-owning.
+"""
+function adopt(::Type{T}, ptr::id) where {T<:NSObjectLike}
+    check_managed_type(T)
+    return attach_managed_finalizer(T(ptr))
+end
+
+"""
+    retain(T, ptr)
+
+Retain a borrowed +0 Objective-C object pointer, wrap it as `T`, and release it
+from a Julia finalizer. Use this for autoreleased objects that must escape their
+autorelease pool.
+"""
+function retain(::Type{T}, ptr::id) where {T<:NSObjectLike}
+    check_managed_type(T)
+    obj = T(ptr)
+    retain(obj)
+    return attach_managed_finalizer(obj)
+end
 
 # Default equality for ObjC objects via `isEqual:`. Specific classes can
 # override this for a faster path (NSString, NSURL, etc. already do).
@@ -246,11 +317,11 @@ Base.isless(a::NSDecimalNumber, b::NSDecimalNumber) = compare(a, b) == NSOrdered
 
 export NSCopying
 
-@objcwrapper immutable = false NSCopying <: NSObject
+@objcwrapper managed = true NSCopying <: NSObject
 
 export NSData
 
-@objcwrapper immutable = false NSData <: NSObject
+@objcwrapper managed = true NSData <: NSObject
 
 export NSString
 
@@ -366,7 +437,7 @@ Dict{K,V}(dict::NSDictionary) where {K,V} = convert(Dict{K,V}, dict)
 
 export NSError
 
-@objcwrapper NSError <: NSObject
+@objcwrapper managed = true NSError <: NSObject
 
 @objcproperties NSError begin
     @autoproperty code::NSInteger
@@ -383,14 +454,14 @@ function NSError(domain, code)
     err = @objc [NSError errorWithDomain:domain::id{NSString}
                         code:code::NSInteger
                         userInfo:nil::id{NSDictionary}]::id{NSError}
-    return NSError(err)
+    return retain(NSError, err)
 end
 
 function NSError(domain, code, userInfo)
     err = @objc [NSError errorWithDomain:domain::id{NSString}
                         code:code::NSInteger
                         userInfo:userInfo::id{NSDictionary}]::id{NSError}
-    return NSError(err)
+    return retain(NSError, err)
 end
 
 function Base.showerror(io::IO, err::NSError)
