@@ -17,5 +17,8 @@
 - Added ARC-style managed returns to `@objc`: `::id{T}` remains raw, while
   `::T` wraps Objective-C object pointers and chooses `adopt` or `retain`
   from the selector's method family.
+- Added nullable ARC returns to `@objc`: `::Union{Nothing,T}` returns `nothing`
+  for nil pointers and otherwise applies the same managed ownership behavior
+  as `::T`.
 - Added a macro guard rejecting owned-family `@objc [...]::T` returns into
   unmanaged wrappers, which would otherwise leak the +1 object.

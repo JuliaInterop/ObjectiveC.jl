@@ -88,11 +88,42 @@ function method_family(sel::AbstractString)
     return nothing
 end
 
-objc_ccall_rettyp(rettyp) = rettyp <: Object ? id{rettyp} : rettyp
+function nullable_object(rettyp)
+    rettyp isa Union || return nothing
+    typs = Base.uniontypes(rettyp)
+    length(typs) == 2 || return nothing
+    if typs[1] === Nothing
+        objtyp = typs[2]
+    elseif typs[2] === Nothing
+        objtyp = typs[1]
+    else
+        return nothing
+    end
+    objtyp <: Object || return nothing
+    return objtyp
+end
+
+function objc_ccall_rettyp(rettyp)
+    objtyp = nullable_object(rettyp)
+    objtyp !== nothing && return id{objtyp}
+    return rettyp <: Object ? id{rettyp} : rettyp
+end
 
 function objc_wrap_return(ret, rettyp, sel)
-    rettyp <: Object || return ret
+    objtyp = nullable_object(rettyp)
     family = method_family(sel)
+    if objtyp !== nothing
+        is_managed_wrapper(objtyp) ||
+            error("ObjectiveC call: nullable ARC return requires managed wrapper $objtyp")
+        wrap = if family === nothing
+            :($ObjectiveC.Foundation.retain($objtyp, $ret))
+        else
+            :($ObjectiveC.Foundation.adopt($objtyp, $ret))
+        end
+        return :($ret == $ObjectiveC.nil ? nothing : $wrap)
+    end
+
+    rettyp <: Object || return ret
     if is_managed_wrapper(rettyp)
         if family === nothing
             return :($ObjectiveC.Foundation.retain($rettyp, $ret))
@@ -406,10 +437,10 @@ Keyword arguments:
     `copy`, `mutableCopy`, and `init` must not return directly as an unmanaged
     wrapper, because that would leak the +1 object; use `::id{T}` and release
     manually or keep the wrapper managed.
-    Use `managed=false` only for curated exceptions: value-bridge types such
-    as strings, numbers, containers, and URLs; control/special objects such as
-    autorelease pools, blocks, or dispatch objects; or resources whose lifetime
-    is owned elsewhere.
+    Use `managed=false` only for curated exceptions: Swift-style value bridges
+    such as strings, numbers, containers, and URLs; control/special objects
+    such as autorelease pools, blocks, or dispatch objects; or resources with
+    a bespoke singleton, pooled, or externally synchronized lifetime.
   * `availability`: a `PlatformAvailability` describing the OS/version
     availability of the class.
   * `comparison`: if `true` (default `managed`), define `==` and `hash` for the
@@ -684,7 +715,19 @@ macro objcproperties(typ, ex)
             else
                 property
             end
-            getproperty_ex = objcm(__module__, :([object::id{$(esc(typ))} $getterproperty]::$srcTyp))
+            if Meta.isexpr(srcTyp, :curly) && srcTyp.args[1] == :id
+                objTyp = srcTyp.args[2]
+                retTyp = if is_managed_wrapper(Base.eval(__module__, objTyp))
+                    :(Union{Nothing, $objTyp})
+                else
+                    srcTyp
+                end
+            else
+                objTyp = nothing
+                retTyp = srcTyp
+            end
+
+            getproperty_ex = objcm(__module__, :([object::id{$(esc(typ))} $getterproperty]::$retTyp))
             getproperty_ex = quote
                 @static if !ObjectiveC.is_available($availability)
                     throw($UnavailableError(Symbol($(esc(typ)), ".", field), $availability))
@@ -692,9 +735,9 @@ macro objcproperties(typ, ex)
                 value = $(Expr(:var"hygienic-scope", getproperty_ex, @__MODULE__, __source__))
             end
 
-            # if we're dealing with a typed object pointer, do a nil check and create an object
-            if Meta.isexpr(srcTyp, :curly) && srcTyp.args[1] == :id
-                objTyp = srcTyp.args[2]
+            # if we're dealing with a typed unmanaged object pointer, do a nil check and create
+            # a borrowed wrapper. Managed object properties use the nullable ARC return above.
+            if objTyp !== nothing && retTyp === srcTyp
                 append!(getproperty_ex.args, (quote
                     value == nil && return nothing
                     value = $(esc(objTyp))(value)
@@ -703,6 +746,11 @@ macro objcproperties(typ, ex)
 
             # convert the value, if necessary
             if dstTyp !== nothing
+                if objTyp !== nothing && retTyp !== srcTyp
+                    append!(getproperty_ex.args, (quote
+                        value === nothing && return nothing
+                    end).args)
+                end
                 append!(getproperty_ex.args, (quote
                     value = convert($(esc(dstTyp)), value)
                 end).args)

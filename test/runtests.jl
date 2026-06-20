@@ -400,6 +400,14 @@ using .Foundation
 @objcwrapper TestManagedNSObject <: NSObject
 @objcwrapper managed = false TestUnmanagedNSObject <: NSObject
 
+@objcproperties TestManagedNSObject begin
+    @autoproperty selfObject::id{TestManagedNSObject} getter = self
+end
+
+@objcproperties TestUnmanagedNSObject begin
+    @autoproperty selfObject::id{TestUnmanagedNSObject} getter = self
+end
+
 function owned_object_ptr()
     @objc [NSObject new]::id{TestManagedNSObject}
 end
@@ -438,6 +446,11 @@ end
     @test obj.retainCount == 1
     finalize(obj)
 
+    obj = @objc [NSObject new]::Union{Nothing,TestManagedNSObject}
+    @test obj isa TestManagedNSObject
+    @test obj.retainCount == 1
+    finalize(obj)
+
     obj = @objc [[NSObject alloc]::id{TestManagedNSObject} init]::TestManagedNSObject
     @test obj isa TestManagedNSObject
     @test obj.retainCount == 1
@@ -452,11 +465,38 @@ end
     @test obj.retainCount == count + 1
     finalize(obj)
     @test raw.retainCount == count
+
+    obj = @objc [ptr::id{TestManagedNSObject} self]::Union{Nothing,TestManagedNSObject}
+    @test obj isa TestManagedNSObject
+    @test obj.retainCount == count + 1
+    finalize(obj)
+    @test raw.retainCount == count
+
+    obj = raw.selfObject
+    @test obj isa TestManagedNSObject
+    @test pointer(obj) == pointer(raw)
+    @test obj.retainCount == count + 1
+    finalize(obj)
+    @test raw.retainCount == count
+    release(raw)
+
+    ptr = owned_object_ptr()
+    raw = TestManagedNSObject(ptr)
+    unowned = TestUnmanagedNSObject(reinterpret(id{TestUnmanagedNSObject}, ptr))
+    count = raw.retainCount
+    obj = unowned.selfObject
+    @test obj isa TestUnmanagedNSObject
+    @test pointer(obj) == pointer(unowned)
+    @test raw.retainCount == count
     release(raw)
 
     str = @objc [NSString stringWithUTF8String:"managed"::Ptr{UInt8}]::TestNSString
     @test str isa TestNSString
     @test str.length == length("managed")
+
+    dict = NSDictionary()
+    key = NSString("missing")
+    @test (@objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::Union{Nothing,TestManagedNSObject}) === nothing
 
     ptr = owned_object_ptr()
     raw = TestManagedNSObject(ptr)
