@@ -12,6 +12,11 @@ export @objc, @objcwrapper, @objcproperties, @objcblock
 # chain (which inherits ancestors' getters/setters).
 objc_parent(::Type{<:Object}) = nothing
 
+# `managed=true` wrappers participate in explicit ownership helpers and in
+# ARC-style `@objc` managed returns. Keep this as a trait instead of deriving
+# from mutability so the ownership contract has one source of truth.
+is_managed_wrapper(::Type) = false
+
 
 # Method Calling
 
@@ -66,6 +71,35 @@ function objc_label(typ)
         return typ
     else
         return Symbol(string(typ))
+    end
+end
+
+function method_family(sel::AbstractString)
+    head = first(split(sel, ':'; limit=2))
+    for family in ("alloc", "new", "copy", "mutableCopy", "init")
+        startswith(head, family) || continue
+        family_end = ncodeunits(family)
+        if ncodeunits(head) == family_end
+            return Symbol(family)
+        end
+        next = head[family_end + 1]
+        'a' <= next <= 'z' || return Symbol(family)
+    end
+    return nothing
+end
+
+objc_ccall_rettyp(rettyp) = rettyp <: Object ? id{rettyp} : rettyp
+
+function objc_wrap_return(ret, rettyp, sel)
+    rettyp <: Object || return ret
+    if is_managed_wrapper(rettyp)
+        if method_family(sel) === nothing
+            return :($ObjectiveC.Foundation.retain($rettyp, $ret))
+        else
+            return :($ObjectiveC.Foundation.adopt($rettyp, $ret))
+        end
+    else
+        return :($rettyp($ret))
     end
 end
 
@@ -245,7 +279,8 @@ end
 # mark the generated expression inline while keeping the traced send emitted once.
 function class_message(class_name, msg, rettyp, argtyps, argvals)
     # We follow Julia's ABI implementation, so ccall/@ccall will handle the sret box.
-    send = emit_msgsend(:class, :(Ptr{Cvoid}), rettyp, argtyps, argvals)
+    send = emit_msgsend(:class, :(Ptr{Cvoid}), objc_ccall_rettyp(rettyp), argtyps, argvals)
+    wrap = objc_wrap_return(:raw_ret, rettyp, msg)
 
     quote
         $(Expr(:meta, :inline))
@@ -263,7 +298,8 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
         # Runtime tracing hook (see tracing.jl): one global read + predicted branch when off.
         obj_sub = tracing_subscriber[]
         obj_t0 = obj_sub == C_NULL ? UInt64(0) : tracing_clock()
-        ret = $send
+        raw_ret = $send
+        ret = $wrap
         obj_sub == C_NULL || tracing_dispatch(obj_sub, $(QuoteNode(Symbol(class_name))),
                                               $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
         @static if $tracing
@@ -280,7 +316,8 @@ end
 function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_label=:id)
     # TODO: use the instance type `typ` to verify when in validation mode?
     # We follow Julia's ABI implementation, so ccall/@ccall will handle the sret box.
-    send = emit_msgsend(instance, :(id{Object}), rettyp, argtyps, argvals)
+    send = emit_msgsend(instance, :(id{Object}), objc_ccall_rettyp(rettyp), argtyps, argvals)
+    wrap = objc_wrap_return(:raw_ret, rettyp, msg)
 
     quote
         $(Expr(:meta, :inline))
@@ -299,7 +336,8 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_la
         # Runtime tracing hook (see tracing.jl): one global read + predicted branch when off.
         obj_sub = tracing_subscriber[]
         obj_t0 = obj_sub == C_NULL ? UInt64(0) : tracing_clock()
-        ret = $send
+        raw_ret = $send
+        ret = $wrap
         obj_sub == C_NULL || tracing_dispatch(obj_sub, $(QuoteNode(class_label)),
                                               $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
         @static if $tracing
@@ -443,6 +481,7 @@ macro objcwrapper(ex...)
 
         # record the immediate ObjC parent for the property-dispatch chain.
         $ObjectiveC.objc_parent(::Type{$name}) = $super
+        $ObjectiveC.is_managed_wrapper(::Type{$name}) = $managed
 
         # default property forwarders. `@objcproperties` may override
         # `objc_getproperty`/`objc_setproperty!` per class to install

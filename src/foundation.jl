@@ -88,7 +88,7 @@ function set_managed_release!(f)
 end
 
 function check_managed_type(::Type{T}) where {T<:NSObjectLike}
-    Base.ismutabletype(T) ||
+    ObjectiveC.is_managed_wrapper(T) ||
         throw(ArgumentError("$T is not managed; declare it with `@objcwrapper managed=true`"))
     return nothing
 end
@@ -451,17 +451,15 @@ end
 # TODO: userInfo
 
 function NSError(domain, code)
-    err = @objc [NSError errorWithDomain:domain::id{NSString}
-                        code:code::NSInteger
-                        userInfo:nil::id{NSDictionary}]::id{NSError}
-    return retain(NSError, err)
+    return @objc [NSError errorWithDomain:domain::id{NSString}
+                         code:code::NSInteger
+                         userInfo:nil::id{NSDictionary}]::NSError
 end
 
 function NSError(domain, code, userInfo)
-    err = @objc [NSError errorWithDomain:domain::id{NSString}
-                        code:code::NSInteger
-                        userInfo:userInfo::id{NSDictionary}]::id{NSError}
-    return retain(NSError, err)
+    return @objc [NSError errorWithDomain:domain::id{NSString}
+                         code:code::NSInteger
+                         userInfo:userInfo::id{NSDictionary}]::NSError
 end
 
 function Base.showerror(io::IO, err::NSError)

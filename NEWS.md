@@ -13,3 +13,6 @@
   borrowed +0 pointers, both attaching a release finalizer.
 - Added a managed-release hook for packages that need custom finalizer-time
   release behavior.
+- Added ARC-style managed returns to `@objc`: `::id{T}` remains raw, while
+  `::T` wraps Objective-C object pointers and chooses `adopt` or `retain`
+  from the selector's method family.

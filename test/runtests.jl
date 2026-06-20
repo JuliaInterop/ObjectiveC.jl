@@ -417,6 +417,37 @@ end
         @__MODULE__, :(@objcwrapper immutable = false TestOldKeyword <: NSObject))
     @test Base.ismutabletype(TestManagedNSObject)
 
+    @test ObjectiveC.method_family("newSynchronizedEvent") === :new
+    @test ObjectiveC.method_family("newsletter") === nothing
+    @test ObjectiveC.method_family("initWithString:") === :init
+    @test ObjectiveC.method_family("copyItemAtURL:toURL:error:") === :copy
+    @test ObjectiveC.method_family("mutableCopyWithZone:") === :mutableCopy
+
+    obj = @objc [NSObject new]::TestManagedNSObject
+    @test obj isa TestManagedNSObject
+    @test obj.retainCount == 1
+    finalize(obj)
+
+    obj = @objc [[NSObject alloc]::id{TestManagedNSObject} init]::TestManagedNSObject
+    @test obj isa TestManagedNSObject
+    @test obj.retainCount == 1
+    finalize(obj)
+
+    ptr = owned_object_ptr()
+    @test (@objc [ptr::id{TestManagedNSObject} self]::id{TestManagedNSObject}) isa id{TestManagedNSObject}
+    raw = TestManagedNSObject(ptr)
+    count = raw.retainCount
+    obj = @objc [ptr::id{TestManagedNSObject} self]::TestManagedNSObject
+    @test obj isa TestManagedNSObject
+    @test obj.retainCount == count + 1
+    finalize(obj)
+    @test raw.retainCount == count
+    release(raw)
+
+    str = @objc [NSString stringWithUTF8String:"managed"::Ptr{UInt8}]::TestNSString
+    @test str isa TestNSString
+    @test str.length == length("managed")
+
     ptr = owned_object_ptr()
     raw = TestManagedNSObject(ptr)
     count = raw.retainCount
