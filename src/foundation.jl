@@ -24,7 +24,7 @@ export NSObject, retain, release, autorelease, is_kind_of, adopt,
 @objcwrapper NSObject <: Object
 
 # forward declaration
-@objcwrapper NSString <: NSObject
+@objcwrapper managed = false NSString <: NSObject
 
 @objcproperties NSObject begin
     @autoproperty hash::NSUInteger
@@ -42,14 +42,14 @@ function Base.show(io::IO, ::MIME"text/plain", obj::NSObjectLike)
     end
 end
 
-release(obj::NSObjectLike) =
-    @objc [obj::id{NSObject} release]::Cvoid
+release(obj::Object) =
+    @objc [obj::id{Object} release]::Cvoid
 
-autorelease(obj::NSObjectLike) =
-    @objc [obj::id{NSObject} autorelease]::Cvoid
+autorelease(obj::Object) =
+    @objc [obj::id{Object} autorelease]::Cvoid
 
-retain(obj::NSObjectLike) =
-    @objc [obj::id{NSObject} retain]::Cvoid
+retain(obj::Object) =
+    @objc [obj::id{Object} retain]::Cvoid
 
 is_kind_of(obj::NSObjectLike, class::Class) =
     @objc [obj::id{NSObject} isKindOfClass:class::Class]::Bool
@@ -63,7 +63,7 @@ Release a managed Objective-C wrapper from a Julia finalizer. Packages that need
 extra finalizer-time behavior, such as installing an autorelease pool, can
 override the process-wide hook with [`set_managed_release!`](@ref).
 """
-function managed_release(obj::NSObjectLike)
+function managed_release(obj::Object)
     hook = managed_release_hook[]
     if hook === nothing
         release(obj)
@@ -87,13 +87,13 @@ function set_managed_release!(f)
     return old
 end
 
-function check_managed_type(::Type{T}) where {T<:NSObjectLike}
+function check_managed_type(::Type{T}) where {T<:Object}
     ObjectiveC.is_managed_wrapper(T) ||
         throw(ArgumentError("$T is not managed; declare it with `@objcwrapper managed=true`"))
     return nothing
 end
 
-function attach_managed_finalizer(obj::NSObjectLike)
+function attach_managed_finalizer(obj::Object)
     finalizer(managed_release, obj)
     return obj
 end
@@ -105,7 +105,7 @@ Wrap a +1 Objective-C object pointer, such as a result from a `new`, `alloc`,
 `copy`, or `mutableCopy` family method, and release it from a Julia finalizer.
 This does not retain the object. The bare `T(ptr)` constructor is non-owning.
 """
-function adopt(::Type{T}, ptr::id) where {T<:NSObjectLike}
+function adopt(::Type{T}, ptr::id) where {T<:Object}
     check_managed_type(T)
     return attach_managed_finalizer(T(ptr))
 end
@@ -117,7 +117,7 @@ Retain a borrowed +0 Objective-C object pointer, wrap it as `T`, and release it
 from a Julia finalizer. Use this for autoreleased objects that must escape their
 autorelease pool.
 """
-function retain(::Type{T}, ptr::id) where {T<:NSObjectLike}
+function retain(::Type{T}, ptr::id) where {T<:Object}
     check_managed_type(T)
     obj = T(ptr)
     retain(obj)
@@ -146,7 +146,7 @@ Base.cconvert(::Type{NSRange}, r::UnitRange{<:Integer}) = NSRange(first(r), leng
 
 export NSValue
 
-@objcwrapper NSValue <: NSObject
+@objcwrapper managed = false NSValue <: NSObject
 
 Base.:(==)(v1::NSValue, v2::NSValue) =
     @objc [v1::id{NSValue} isEqualToValue:v2::id{NSValue}]::Bool
@@ -216,7 +216,7 @@ end
 
 export NSNumber
 
-@objcwrapper NSNumber <: NSObject
+@objcwrapper managed = false NSNumber <: NSObject
 
 @objcproperties NSNumber begin
     @autoproperty boolValue::Bool
@@ -267,7 +267,7 @@ end
 
 export NSDecimalNumber, NaNDecimalNumber
 
-@objcwrapper NSDecimalNumber <: NSNumber
+@objcwrapper managed = false NSDecimalNumber <: NSNumber
 @objcproperties NSDecimalNumber begin
     #@autoproperty defaultBehavior::NSDecimalNumberBehaviors
     @autoproperty decimalValue::NSDecimal
@@ -317,11 +317,11 @@ Base.isless(a::NSDecimalNumber, b::NSDecimalNumber) = compare(a, b) == NSOrdered
 
 export NSCopying
 
-@objcwrapper managed = true NSCopying <: NSObject
+@objcwrapper NSCopying <: NSObject
 
 export NSData
 
-@objcwrapper managed = true NSData <: NSObject
+@objcwrapper NSData <: NSObject
 
 export NSString
 
@@ -363,7 +363,7 @@ Base.contains(s::AbstractString, t::NSString) =
 
 export NSArray
 
-@objcwrapper NSArray <: NSObject
+@objcwrapper managed = false NSArray <: NSObject
 
 @objcproperties NSArray begin
     @autoproperty count::NSUInteger
@@ -397,7 +397,7 @@ Vector{T}(arr::NSArray) where {T} = convert(Vector{T}, arr)
 
 export NSDictionary
 
-@objcwrapper NSDictionary <: NSObject
+@objcwrapper managed = false NSDictionary <: NSObject
 
 @objcproperties NSDictionary begin
     @autoproperty count::NSUInteger
@@ -437,7 +437,7 @@ Dict{K,V}(dict::NSDictionary) where {K,V} = convert(Dict{K,V}, dict)
 
 export NSError
 
-@objcwrapper managed = true NSError <: NSObject
+@objcwrapper NSError <: NSObject
 
 @objcproperties NSError begin
     @autoproperty code::NSInteger
@@ -514,7 +514,7 @@ load_framework(name) = load(NSBundle("/System/Library/Frameworks/$name.framework
 
 export NSURL, NSFileURL
 
-@objcwrapper NSURL <: NSObject
+@objcwrapper managed = false NSURL <: NSObject
 
 @objcproperties NSURL begin
     # Querying an NSURL
@@ -579,7 +579,7 @@ end
 NSConcreteGlobalBlock() = cglobal(:_NSConcreteGlobalBlock)
 NSConcreteStackBlock()  = cglobal(:_NSConcreteStackBlock)
 
-@objcwrapper NSBlock <: NSObject
+@objcwrapper managed = false NSBlock <: NSObject
 
 function Base.copy(block::NSBlock)
     @objc [block::id{NSBlock} copy]::id{NSBlock}
@@ -588,7 +588,7 @@ end
 
 export NSAutoreleasePool, @autoreleasepool, drain
 
-@objcwrapper NSAutoreleasePool <: NSObject
+@objcwrapper managed = false NSAutoreleasePool <: NSObject
 
 """
     NSAutoreleasePool()

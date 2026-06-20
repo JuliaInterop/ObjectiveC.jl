@@ -2,10 +2,11 @@
 
 ## Breaking changes
 
-- Replaced `@objcwrapper immutable=` with `managed=`. Use `managed=true` for
-  mutable wrappers that participate in explicit Objective-C ownership through
-  `adopt(T, ptr)` or `retain(T, ptr)`. The bare `T(ptr)` constructor remains
-  non-owning.
+- Replaced `@objcwrapper immutable=` with `managed=`. Wrappers are now managed
+  by default: they are mutable and participate in Objective-C ownership through
+  `adopt(T, ptr)`, `retain(T, ptr)`, and ARC-style `@objc [...]::T` returns.
+  Use `managed=false` only for borrowed/value-like wrappers whose lifetime is
+  owned elsewhere; those wrappers remain immutable and `isbits`.
 
 ## Added
 
@@ -16,3 +17,5 @@
 - Added ARC-style managed returns to `@objc`: `::id{T}` remains raw, while
   `::T` wraps Objective-C object pointers and chooses `adopt` or `retain`
   from the selector's method family.
+- Added a macro guard rejecting owned-family `@objc [...]::T` returns into
+  unmanaged wrappers, which would otherwise leak the +1 object.

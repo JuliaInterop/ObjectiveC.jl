@@ -154,6 +154,8 @@ end
     # unparameterized umbrella still holds.
     @test NoObjectImport.NoImportWrapper <: ObjectiveC.Object
     @test ObjectiveC.objc_parent(NoObjectImport.NoImportWrapper) === ObjectiveC.Object
+    @test ObjectiveC.is_managed_wrapper(NoObjectImport.NoImportWrapper)
+    @test Base.ismutabletype(NoObjectImport.NoImportWrapper)
 end
 
 @objcproperties TestNSString begin
@@ -179,7 +181,7 @@ end
 # `propertynames` inherits the parent's property list.
 @objcwrapper TestNSStringBareSub <: TestNSString
 @testset "@objcproperties" begin
-    # immutable object with only read properties
+    # object with only read properties
     str1 = "foo"
     immut = TestNSString(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestNSString})
 
@@ -395,7 +397,8 @@ end
 
 using .Foundation
 
-@objcwrapper managed = true TestManagedNSObject <: NSObject
+@objcwrapper TestManagedNSObject <: NSObject
+@objcwrapper managed = false TestUnmanagedNSObject <: NSObject
 
 function owned_object_ptr()
     @objc [NSObject new]::id{TestManagedNSObject}
@@ -416,12 +419,19 @@ end
     @test_throws "unrecognized keyword argument: immutable" macroexpand(
         @__MODULE__, :(@objcwrapper immutable = false TestOldKeyword <: NSObject))
     @test Base.ismutabletype(TestManagedNSObject)
+    @test ObjectiveC.is_managed_wrapper(TestManagedNSObject)
+    @test !Base.ismutabletype(TestUnmanagedNSObject)
+    @test isbitstype(TestUnmanagedNSObject)
+    @test !ObjectiveC.is_managed_wrapper(TestUnmanagedNSObject)
 
     @test ObjectiveC.method_family("newSynchronizedEvent") === :new
     @test ObjectiveC.method_family("newsletter") === nothing
     @test ObjectiveC.method_family("initWithString:") === :init
     @test ObjectiveC.method_family("copyItemAtURL:toURL:error:") === :copy
     @test ObjectiveC.method_family("mutableCopyWithZone:") === :mutableCopy
+
+    @test_throws "owned-family selector `new` cannot return unmanaged wrapper" macroexpand(
+        @__MODULE__, :(@objc [NSObject new]::TestUnmanagedNSObject))
 
     obj = @objc [NSObject new]::TestManagedNSObject
     @test obj isa TestManagedNSObject
@@ -455,6 +465,15 @@ end
     @test obj.retainCount == count
     finalize(obj)
 
+    ptr = owned_object_ptr()
+    raw = TestManagedNSObject(ptr)
+    try
+        @test_throws ArgumentError adopt(TestUnmanagedNSObject, ptr)
+        @test_throws ArgumentError retain(TestUnmanagedNSObject, ptr)
+    finally
+        release(raw)
+    end
+
     ptr = borrowed_object_ptr()
     raw = TestManagedNSObject(ptr)
     count = raw.retainCount
@@ -480,6 +499,23 @@ end
 end
 
 @testset "foundation" begin
+
+@testset "managed defaults and opt-outs" begin
+    @test ObjectiveC.is_managed_wrapper(NSObject)
+    @test Base.ismutabletype(NSObject)
+
+    for T in (NSString, NSNumber, NSValue, NSDecimalNumber, NSArray, NSDictionary, NSURL,
+              NSBlock, NSAutoreleasePool)
+        @test !ObjectiveC.is_managed_wrapper(T)
+        @test !Base.ismutabletype(T)
+        @test isbitstype(T)
+    end
+
+    for T in (NSError, NSData, NSCopying)
+        @test ObjectiveC.is_managed_wrapper(T)
+        @test Base.ismutabletype(T)
+    end
+end
 
 @testset "NSAutoReleasePool" begin
     # a function that creates an `autorelease`d object (by calling `arrayWithObjects`)
@@ -674,6 +710,14 @@ end
 @testset "dispatch" begin
 
 using .Dispatch
+
+@testset "dispatch managed opt-outs" begin
+    for T in (dispatch_object, dispatch_queue, dispatch_data)
+        @test !ObjectiveC.is_managed_wrapper(T)
+        @test !Base.ismutabletype(T)
+        @test isbitstype(T)
+    end
+end
 
 @testset "dispatch_data" begin
     arr = [1]

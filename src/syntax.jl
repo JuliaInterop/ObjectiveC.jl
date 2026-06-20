@@ -92,13 +92,15 @@ objc_ccall_rettyp(rettyp) = rettyp <: Object ? id{rettyp} : rettyp
 
 function objc_wrap_return(ret, rettyp, sel)
     rettyp <: Object || return ret
+    family = method_family(sel)
     if is_managed_wrapper(rettyp)
-        if method_family(sel) === nothing
+        if family === nothing
             return :($ObjectiveC.Foundation.retain($rettyp, $ret))
         else
             return :($ObjectiveC.Foundation.adopt($rettyp, $ret))
         end
     else
+        family === nothing || error("ObjectiveC call: owned-family selector `$sel` cannot return unmanaged wrapper $rettyp; use `::id{$rettyp}` and release manually, or declare the wrapper with `managed=true`")
         return :($rettyp($ret))
     end
 end
@@ -389,12 +391,25 @@ or when you specifically want to refuse them.
 
 Keyword arguments:
 
-  * `managed`: if `true`, define the wrapper as a mutable struct that can
-    participate in explicit Objective-C ownership via `adopt(T, ptr)` and
-    `retain(T, ptr)`. The bare `T(ptr)` constructor never takes ownership or
-    attaches a finalizer; creation sites must choose `adopt` for +1 pointers
+  * `managed`: if `true` (the default), define the wrapper as a mutable struct
+    that can participate in explicit Objective-C ownership via `adopt(T, ptr)`
+    and `retain(T, ptr)`. The bare `T(ptr)` constructor never takes ownership
+    or attaches a finalizer; creation sites must choose `adopt` for +1 pointers
     from `new`/`alloc`/`copy`/`mutableCopy` families, or `retain` for borrowed
-    +0 pointers.
+    +0 pointers. `@objc [...]::T` does this automatically for managed
+    wrappers, using the selector's method family to choose `adopt` or `retain`.
+  * `managed=false`: opt out of ownership. The wrapper is immutable and
+    `isbits`, so values are cheap to pass and store densely, but they never
+    retain or release the underlying Objective-C object. `T(ptr)` and
+    `@objc [...]::T` produce borrowed references; `adopt(T, ptr)` and
+    `retain(T, ptr)` throw. Owned-family methods such as `new`, `alloc`,
+    `copy`, `mutableCopy`, and `init` must not return directly as an unmanaged
+    wrapper, because that would leak the +1 object; use `::id{T}` and release
+    manually or keep the wrapper managed.
+    Use `managed=false` only for curated exceptions: value-bridge types such
+    as strings, numbers, containers, and URLs; control/special objects such as
+    autorelease pools, blocks, or dispatch objects; or resources whose lifetime
+    is owned elsewhere.
   * `availability`: a `PlatformAvailability` describing the OS/version
     availability of the class.
   * `comparison`: if `true` (default `managed`), define `==` and `hash` for the
@@ -426,7 +441,7 @@ macro objcwrapper(ex...)
             wrappererror("invalid keyword argument: $kw")
         end
     end
-    managed = something(managed, false)
+    managed = something(managed, true)
     comparison = something(comparison, managed)
     availability = something(availability, PlatformAvailability[])
 
