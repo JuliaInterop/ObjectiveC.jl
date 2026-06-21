@@ -18,8 +18,10 @@ const NSIntegerMax = typemax(NSInteger)
 const NSUIntegerMax = typemax(NSUInteger)
 
 
-export NSObject, retain, release, autorelease, is_kind_of, adopt,
-       managed_release, set_managed_release!
+export NSObject, is_kind_of
+
+ObjectiveC.@public retain, release, autorelease, adopt,
+                   managed_release, set_managed_release!
 
 @objcwrapper NSObject <: Object
 
@@ -42,12 +44,35 @@ function Base.show(io::IO, ::MIME"text/plain", obj::NSObjectLike)
     end
 end
 
+"""
+    release(obj)
+
+Manually release an Objective-C object. This is for unmanaged wrappers and raw
+manual-ownership code. Do not call it on managed wrappers returned by
+`@objc ...::T`, `adopt(T, ptr)`, or `retain(T, ptr)`: their finalizer will
+release the object. Use `managed=false` wrappers or `::id{T}` returns when you
+need manual ownership.
+"""
 release(obj::Object) =
     @objc [obj::id{Object} release]::Cvoid
 
+"""
+    autorelease(obj)
+
+Manually send `autorelease` to an Objective-C object. This is for unmanaged
+wrappers and raw manual-ownership code; managed wrappers should be left to their
+finalizer.
+"""
 autorelease(obj::Object) =
     @objc [obj::id{Object} autorelease]::Cvoid
 
+"""
+    retain(obj)
+
+Manually retain an Objective-C object and return the raw Objective-C result.
+This is for unmanaged wrappers and raw manual-ownership code. Prefer
+`retain(T, ptr)` for borrowed pointers that should become managed wrappers.
+"""
 retain(obj::Object) =
     @objc [obj::id{Object} retain]::Cvoid
 
@@ -104,6 +129,7 @@ end
 Wrap a +1 Objective-C object pointer, such as a result from a `new`, `alloc`,
 `copy`, or `mutableCopy` family method, and release it from a Julia finalizer.
 This does not retain the object. The bare `T(ptr)` constructor is non-owning.
+Do not manually release the returned wrapper.
 """
 function adopt(::Type{T}, ptr::id) where {T<:Object}
     check_managed_type(T)
@@ -116,6 +142,7 @@ end
 Retain a borrowed +0 Objective-C object pointer, wrap it as `T`, and release it
 from a Julia finalizer. Use this for autoreleased objects that must escape their
 autorelease pool.
+Do not manually release the returned wrapper.
 """
 function retain(::Type{T}, ptr::id) where {T<:Object}
     check_managed_type(T)
@@ -490,7 +517,7 @@ export NSHost, current_host, hostname
     @autoproperty localizedName::id{NSString}
 end
 
-current_host() = NSHost(@objc [NSHost currentHost]::id{NSHost})
+current_host() = @objc [NSHost currentHost]::NSHost
 hostname() = unsafe_string(current_host().localizedName.UTF8String)
 
 
@@ -499,9 +526,9 @@ export NSBundle, load_framework
 @objcwrapper NSBundle <: NSObject
 
 function NSBundle(path::Union{String,NSString})
-    ptr = @objc [NSBundle bundleWithPath:path::id{NSString}]::id{NSBundle}
-    ptr == nil && error("Couldn't find bundle '$path'")
-    NSBundle(ptr)
+    bundle = @objc [NSBundle bundleWithPath:path::id{NSString}]::Union{Nothing,NSBundle}
+    bundle === nothing && error("Couldn't find bundle '$path'")
+    return bundle
 end
 
 function load(bundle::NSBundle)
@@ -756,6 +783,6 @@ end
     @autoproperty operatingSystemVersion::NSOperatingSystemVersion
 end
 
-NSProcessInfo() = NSProcessInfo(@objc [NSProcessInfo processInfo]::id{NSProcessInfo})
+NSProcessInfo() = @objc [NSProcessInfo processInfo]::NSProcessInfo
 
 end
