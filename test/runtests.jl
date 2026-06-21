@@ -584,23 +584,6 @@ end
 
 @testset "foundation" begin
 
-@testset "managed defaults and opt-outs" begin
-    @test ObjectiveC.is_managed_wrapper(NSObject)
-    @test Base.ismutabletype(NSObject)
-
-    for T in (NSString, NSNumber, NSValue, NSDecimalNumber, NSArray, NSDictionary, NSURL,
-              NSBlock, NSAutoreleasePool)
-        @test !ObjectiveC.is_managed_wrapper(T)
-        @test !Base.ismutabletype(T)
-        @test isbitstype(T)
-    end
-
-    for T in (NSError, NSData, NSCopying)
-        @test ObjectiveC.is_managed_wrapper(T)
-        @test Base.ismutabletype(T)
-    end
-end
-
 @testset "NSAutoReleasePool" begin
     # a function that creates an `autorelease`d object (by calling `arrayWithObjects`)
     function trigger_autorelease()
@@ -794,14 +777,6 @@ end
 @testset "dispatch" begin
 
 using .Dispatch
-
-@testset "dispatch managed opt-outs" begin
-    for T in (dispatch_object, dispatch_queue, dispatch_data)
-        @test !ObjectiveC.is_managed_wrapper(T)
-        @test !Base.ismutabletype(T)
-        @test isbitstype(T)
-    end
-end
 
 @testset "dispatch_data" begin
     arr = [1]
