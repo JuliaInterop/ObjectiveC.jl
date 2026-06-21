@@ -154,6 +154,8 @@ end
     # unparameterized umbrella still holds.
     @test NoObjectImport.NoImportWrapper <: ObjectiveC.Object
     @test ObjectiveC.objc_parent(NoObjectImport.NoImportWrapper) === ObjectiveC.Object
+    @test ObjectiveC.is_managed_wrapper(NoObjectImport.NoImportWrapper)
+    @test Base.ismutabletype(NoObjectImport.NoImportWrapper)
 end
 
 @objcproperties TestNSString begin
@@ -179,7 +181,7 @@ end
 # `propertynames` inherits the parent's property list.
 @objcwrapper TestNSStringBareSub <: TestNSString
 @testset "@objcproperties" begin
-    # immutable object with only read properties
+    # object with only read properties
     str1 = "foo"
     immut = TestNSString(@objc [NSString stringWithUTF8String:str1::Ptr{UInt8}]::id{TestNSString})
 
@@ -394,6 +396,192 @@ open_pair(a::TestNSStringLike, b::TestNSOperationQueueLike) =
 end
 
 using .Foundation
+
+@objcwrapper TestManagedNSObject <: NSObject
+@objcwrapper managed = false TestUnmanagedNSObject <: NSObject
+@objcwrapper TestUnsafeReleaseNSObject <: NSObject
+
+@objcproperties TestManagedNSObject begin
+    @autoproperty selfObject::id{TestManagedNSObject} getter = self
+end
+
+@objcproperties TestUnmanagedNSObject begin
+    @autoproperty selfObject::id{TestUnmanagedNSObject} getter = self
+end
+
+function owned_object_ptr()
+    @objc [NSObject new]::id{TestManagedNSObject}
+end
+
+function borrowed_object_ptr()
+    ptr = owned_object_ptr()
+    @objc [ptr::id{TestManagedNSObject} autorelease]::id{TestManagedNSObject}
+end
+
+const unsafe_release_calls = Ref(0)
+
+function Foundation.unsafe_release(obj::TestUnsafeReleaseNSObject)
+    unsafe_release_calls[] += 1
+    @objc [obj::id{Object} release]::Cvoid
+end
+
+function release_stress(n)
+    Base.Threads.@threads for _ in 1:n
+        obj = @objc [NSObject new]::TestManagedNSObject
+        release(obj)
+        release(obj)
+        finalize(obj)
+    end
+    return nothing
+end
+
+@testset "managed wrappers" begin
+    @test_throws "unrecognized keyword argument: immutable" macroexpand(
+        @__MODULE__, :(@objcwrapper immutable = false TestOldKeyword <: NSObject))
+    @test Base.ismutabletype(TestManagedNSObject)
+    @test fieldnames(TestManagedNSObject) == (:ptr, :owned)
+    @test ObjectiveC.is_managed_wrapper(TestManagedNSObject)
+    @test !Base.ismutabletype(TestUnmanagedNSObject)
+    @test fieldnames(TestUnmanagedNSObject) == (:ptr,)
+    @test isbitstype(TestUnmanagedNSObject)
+    @test !ObjectiveC.is_managed_wrapper(TestUnmanagedNSObject)
+
+    @test ObjectiveC.method_family("newSynchronizedEvent") === :new
+    @test ObjectiveC.method_family("newsletter") === nothing
+    @test ObjectiveC.method_family("initWithString:") === :init
+    @test ObjectiveC.method_family("_initWithString:") === :init
+    @test ObjectiveC.method_family("copyItemAtURL:toURL:error:") === :copy
+    @test ObjectiveC.method_family("__copy") === :copy
+    @test ObjectiveC.method_family("mutableCopyWithZone:") === :mutableCopy
+
+    @test_throws "owned-family selector `new` cannot return unmanaged wrapper" macroexpand(
+        @__MODULE__, :(@objc [NSObject new]::TestUnmanagedNSObject))
+    @test_throws "owned-family selector `new` cannot return unmanaged wrapper" macroexpand(
+        @__MODULE__, :(@objc [NSObject new]::Union{Nothing,TestUnmanagedNSObject}))
+
+    obj = @objc [NSObject new]::TestManagedNSObject
+    @test obj isa TestManagedNSObject
+    @test obj.retainCount == 1
+    finalize(obj)
+
+    obj = @objc [NSObject new]::Union{Nothing,TestManagedNSObject}
+    @test obj isa TestManagedNSObject
+    @test obj.retainCount == 1
+    finalize(obj)
+
+    obj = @objc [[NSObject alloc]::id{TestManagedNSObject} init]::TestManagedNSObject
+    @test obj isa TestManagedNSObject
+    @test obj.retainCount == 1
+    finalize(obj)
+
+    ptr = owned_object_ptr()
+    @test (@objc [ptr::id{TestManagedNSObject} self]::id{TestManagedNSObject}) isa id{TestManagedNSObject}
+    raw = TestManagedNSObject(ptr)
+    count = raw.retainCount
+    obj = @objc [ptr::id{TestManagedNSObject} self]::TestManagedNSObject
+    @test obj isa TestManagedNSObject
+    @test obj.retainCount == count + 1
+    finalize(obj)
+    @test raw.retainCount == count
+
+    obj = @objc [ptr::id{TestManagedNSObject} self]::Union{Nothing,TestManagedNSObject}
+    @test obj isa TestManagedNSObject
+    @test obj.retainCount == count + 1
+    finalize(obj)
+    @test raw.retainCount == count
+
+    obj = raw.selfObject
+    @test obj isa TestManagedNSObject
+    @test pointer(obj) == pointer(raw)
+    @test obj.retainCount == count + 1
+    finalize(obj)
+    @test raw.retainCount == count
+    Foundation.unsafe_release(raw)
+
+    ptr = owned_object_ptr()
+    raw = TestManagedNSObject(ptr)
+    unowned = TestUnmanagedNSObject(reinterpret(id{TestUnmanagedNSObject}, ptr))
+    count = raw.retainCount
+    obj = unowned.selfObject
+    @test obj isa TestUnmanagedNSObject
+    @test pointer(obj) == pointer(unowned)
+    @test raw.retainCount == count
+    obj = @objc [unowned::id{TestUnmanagedNSObject} self]::Union{Nothing,TestUnmanagedNSObject}
+    @test obj isa TestUnmanagedNSObject
+    @test pointer(obj) == pointer(unowned)
+    @test raw.retainCount == count
+    Foundation.unsafe_release(raw)
+
+    str = @objc [NSString stringWithUTF8String:"managed"::Ptr{UInt8}]::TestNSString
+    @test str isa TestNSString
+    @test str.length == length("managed")
+    str = @objc [NSString stringWithUTF8String:"nullable"::Ptr{UInt8}]::Union{Nothing,NSString}
+    @test str isa NSString
+    @test String(str) == "nullable"
+
+    dict = NSDictionary()
+    key = NSString("missing")
+    @test (@objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::Union{Nothing,TestManagedNSObject}) === nothing
+    @test (@objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::Union{Nothing,TestUnmanagedNSObject}) === nothing
+
+    ptr = owned_object_ptr()
+    raw = TestManagedNSObject(ptr)
+    count = raw.retainCount
+    obj = Foundation.adopt(TestManagedNSObject, ptr)
+    @test obj.retainCount == count
+    finalize(obj)
+
+    ptr = owned_object_ptr()
+    raw = TestManagedNSObject(ptr)
+    try
+        @test_throws ArgumentError Foundation.adopt(TestUnmanagedNSObject, ptr)
+        @test_throws ArgumentError retain(TestUnmanagedNSObject, ptr)
+    finally
+        Foundation.unsafe_release(raw)
+    end
+
+    ptr = borrowed_object_ptr()
+    raw = TestManagedNSObject(ptr)
+    count = raw.retainCount
+    obj = retain(TestManagedNSObject, ptr)
+    @test obj.retainCount == count + 1
+    @test obj == raw
+    @test hash(obj) == hash(raw)
+    finalize(obj)
+    @test raw.retainCount == count
+
+    ptr = owned_object_ptr()
+    raw = TestManagedNSObject(ptr)
+    retain(raw)
+    count = raw.retainCount
+    obj = Foundation.adopt(TestManagedNSObject, ptr)
+    @test obj.retainCount == count
+    release(obj)
+    @test raw.retainCount == count - 1
+    release(obj)
+    @test raw.retainCount == count - 1
+    finalize(obj)
+    @test raw.retainCount == count - 1
+    Foundation.unsafe_release(raw)
+
+    ptr = owned_object_ptr()
+    raw = TestManagedNSObject(ptr)
+    count = raw.retainCount
+    release(raw)
+    @test raw.retainCount == count
+    Foundation.unsafe_release(raw)
+
+    unsafe_release_calls[] = 0
+    obj = @objc [NSObject new]::TestUnsafeReleaseNSObject
+    release(obj)
+    @test unsafe_release_calls[] == 1
+    release(obj)
+    finalize(obj)
+    @test unsafe_release_calls[] == 1
+
+    @test_nowarn release_stress(32 * max(1, Base.Threads.nthreads()))
+end
+
 @testset "foundation" begin
 
 @testset "NSAutoReleasePool" begin

@@ -10,7 +10,7 @@ using ..Foundation
 
 export dispatch_object, dispatch_object_t, activate, suspend, resume
 
-@objcwrapper dispatch_object <: NSObject
+@objcwrapper managed = false dispatch_object <: NSObject
 
 const dispatch_object_t = id{dispatch_object}
 
@@ -18,7 +18,7 @@ function Foundation.retain(obj::dispatch_object)
     ccall(:dispatch_retain, Cvoid, (dispatch_object_t,), obj)
 end
 
-function Foundation.release(obj::dispatch_object)
+function Foundation.unsafe_release(obj::dispatch_object)
     ccall(:dispatch_release, Cvoid, (dispatch_object_t,), obj)
 end
 
@@ -39,7 +39,7 @@ end
 
 export dispatch_queue, dispatch_queue_t, main_queue, global_queue
 
-@objcwrapper dispatch_queue <: dispatch_object
+@objcwrapper managed = false dispatch_queue <: dispatch_object
 
 const dispatch_queue_t = id{dispatch_queue}
 
@@ -58,7 +58,7 @@ end
 
 export dispatch_data, dispatch_data_t
 
-@objcwrapper dispatch_data <: dispatch_object
+@objcwrapper managed = false dispatch_data <: dispatch_object
 
 const DISPATCH_DATA_DESTRUCTOR_DEFAULT = C_NULL
 

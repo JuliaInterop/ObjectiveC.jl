@@ -37,12 +37,12 @@ track of `id` pointers, it is possible to have ObjectiveC.jl do this for you:
 ```julia
 julia> @objcwrapper NSValue
 
-julia> obj_ptr = @objc [NSValue valueWithPointer:C_NULL::Ptr{Cvoid}]::id{NSValue}
-id{NSValue}(0x00006000023cfca0)
-
-julia> obj = NSValue(obj_ptr)
+julia> obj = @objc [NSValue valueWithPointer:C_NULL::Ptr{Cvoid}]::NSValue
 NSValue (object of type NSConcreteValue)
 ```
+
+This object will be automatically released by the Julia garbage collector when it is no
+longer referenced.
 
 
 ## Type model
@@ -75,6 +75,83 @@ julia> get_pointer(val::NSValueLike) =
 julia> get_pointer(obj)
 Ptr{Nothing} @0x0000000000000000
 ```
+
+
+## Lifetime management
+
+Objective-C objects are reference counted: `retain` bumps an object's count, `release` drops
+it, and the object is freed when the count hits zero. Whoever creates or holds an object has
+to balance its retains with releases. ObjectiveC.jl can do that bookkeeping for you, using the
+same rules the ARC compiler applies.
+
+Each wrapper is either managed or not. You pick per class with the `managed` keyword of
+`@objcwrapper`, and managed is the default:
+
+* a managed wrapper is a mutable struct that owns a reference to its object. It attaches a
+  finalizer that releases the object once the wrapper is collected. You can also call
+  `release` to free the wrapper's owned reference before the garbage collector gets there.
+* an unmanaged wrapper (`managed=false`) is an immutable, `isbits` borrowed reference. It
+  never automatically retains or releases anything, and it counts on the object's lifetime
+  being guaranteed somewhere else. These are cheap to pass around.
+
+### ARC-style returns
+
+The return type you write on an `@objc` call decides how the result comes back:
+
+```julia
+@objc [obj someMethod]::id{Foo}              # raw pointer, you own the result
+@objc [obj someMethod]::Foo                  # managed wrapper
+@objc [obj someMethod]::Union{Nothing,Foo}   # managed wrapper, or nothing on nil
+```
+
+`::id{Foo}` gives you the bare pointer and gets out of the way. `::Foo` returns a managed
+wrapper. `::Union{Nothing,Foo}` does the same but turns a `nil` result into `nothing` instead
+of throwing.
+
+To wrap the result, ObjectiveC.jl reads the selector and applies ARC's ownership rules.
+Methods in the `alloc`, `new`, `copy`, `mutableCopy`, and `init` families already return
+something you own, so the wrapper takes that reference as-is. Every other method returns a
+borrowed object, so the wrapper retains it first. The finalizer issues the one matching
+release either way.
+
+```julia
+# `new` is an owned-family selector, so the wrapper takes the result as-is.
+obj = @objc [NSObject new]::NSObject
+
+# `self` is not, so the result is borrowed and the wrapper retains it.
+same = @objc [obj self]::NSObject
+```
+
+When you have a pointer from somewhere other than `@objc`, e.g. from a `::id{T}` call,
+there are several ways to wrap it yourself:
+
+* `T(ptr)` wraps a pointer, without retaining or installing a finalizer to release it.
+* `adopt(T, ptr)` wraps a pointer without retaining it, but installs a finalizer.
+* `retain(T, ptr)` retains a borrowed pointer, wraps the result, and installs a finalizer.
+
+### Release timing
+
+The ownership decisions match ARC, but the timing doesn't. ARC releases an object the moment
+its last strong reference leaves scope. Here the release runs from a finalizer, whenever the
+garbage collector gets around to the wrapper. If you know a managed wrapper is done, you can
+manually call `release(obj)` to release its owned reference immediately. This is safe to
+call repeatedly and safe if the finalizer later runs.
+
+### Unmanaged objects
+
+It's possible to opt out of reference counting entirely by using `managed=false` on the
+wrapper. This is unsafe, and only makes sense in a handful of cases:
+
+* value-like objects such as strings, numbers, collections, and URLs;
+* control objects that run their own lifetime, like autorelease pools, blocks, and dispatch
+  objects;
+* objects something else already keeps alive: singletons, pooled objects, or resources whose
+  release is coordinated elsewhere.
+
+Beware that this also opts out of the idempotency of `release`. If you call `release` on an
+unmanaged wrapper, it sends the raw `release` message to the object, which may crash if used
+incorrectly. It is thus advised not to opt out of automatic memory management when the
+lifetime of an object is non-trivial.
 
 
 ## Properties

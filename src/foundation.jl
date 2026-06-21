@@ -20,10 +20,12 @@ const NSUIntegerMax = typemax(NSUInteger)
 
 export NSObject, retain, release, autorelease, is_kind_of
 
+ObjectiveC.@public checked_release, unsafe_release, adopt
+
 @objcwrapper NSObject <: Object
 
 # forward declaration
-@objcwrapper NSString <: NSObject
+@objcwrapper managed = false NSString <: NSObject
 
 @objcproperties NSObject begin
     @autoproperty hash::NSUInteger
@@ -41,17 +43,105 @@ function Base.show(io::IO, ::MIME"text/plain", obj::NSObjectLike)
     end
 end
 
-release(obj::NSObjectLike) =
-    @objc [obj::id{NSObject} release]::Cvoid
+"""
+    unsafe_release(obj)
 
-autorelease(obj::NSObjectLike) =
-    @objc [obj::id{NSObject} autorelease]::Cvoid
+Send a raw Objective-C `release` message. This is the primitive release
+operation; package authors may extend it for wrapper families with nonstandard
+release primitives, such as dispatch objects.
+"""
+unsafe_release(obj::Object) =
+    @objc [obj::id{Object} release]::Cvoid
 
-retain(obj::NSObjectLike) =
-    @objc [obj::id{NSObject} retain]::Cvoid
+"""
+    checked_release(obj)
+
+Release the owned reference of a managed wrapper at most once. Package authors
+who need to wrap release-time behavior should extend `release(obj::T)` and call
+`checked_release(obj)` from that method.
+"""
+function checked_release(obj::Object)
+    (@atomicswap :acquire_release obj.owned = false) || return nothing
+    unsafe_release(obj)
+    return nothing
+end
+
+"""
+    release(obj)
+
+Release an Objective-C object.
+
+For managed wrappers, this eagerly releases the wrapper's owned reference and
+is safe to call more than once or before the finalizer runs. For borrowed
+managed wrappers created with the bare `T(ptr)` constructor, this is a no-op.
+For unmanaged wrappers, this sends the raw Objective-C release message.
+"""
+release(obj::Object) =
+    ObjectiveC.is_managed_wrapper(typeof(obj)) ? checked_release(obj) : unsafe_release(obj)
+
+"""
+    autorelease(obj)
+
+Manually send `autorelease` to an Objective-C object. This is for unmanaged
+wrappers and raw manual-ownership code.
+"""
+autorelease(obj::Object) =
+    @objc [obj::id{Object} autorelease]::Cvoid
+
+"""
+    retain(obj)
+
+Manually retain an Objective-C object and return the raw Objective-C result.
+Prefer `retain(T, ptr)` for borrowed pointers that should become managed
+wrappers.
+"""
+retain(obj::Object) =
+    @objc [obj::id{Object} retain]::Cvoid
 
 is_kind_of(obj::NSObjectLike, class::Class) =
     @objc [obj::id{NSObject} isKindOfClass:class::Class]::Bool
+
+function check_managed_type(::Type{T}) where {T<:Object}
+    ObjectiveC.is_managed_wrapper(T) ||
+        throw(ArgumentError("$T is not managed; declare it with `@objcwrapper managed=true`"))
+    return nothing
+end
+
+function attach_managed_finalizer(obj::Object)
+    @atomic obj.owned = true
+    finalizer(release, obj)
+    return obj
+end
+
+"""
+    adopt(T, ptr)
+
+Wrap a +1 Objective-C object pointer, such as a result from a `new`, `alloc`,
+`copy`, or `mutableCopy` family method, and release it from a Julia finalizer.
+This does not retain the object. The bare `T(ptr)` constructor is non-owning.
+You may call `release` on the returned wrapper to release it before the
+finalizer runs.
+"""
+function adopt(::Type{T}, ptr::id) where {T<:Object}
+    check_managed_type(T)
+    return attach_managed_finalizer(T(ptr))
+end
+
+"""
+    retain(T, ptr)
+
+Retain a borrowed +0 Objective-C object pointer, wrap it as `T`, and release it
+from a Julia finalizer. Use this for autoreleased objects that must escape their
+autorelease pool.
+You may call `release` on the returned wrapper to release it before the
+finalizer runs.
+"""
+function retain(::Type{T}, ptr::id) where {T<:Object}
+    check_managed_type(T)
+    obj = T(ptr)
+    retain(obj)
+    return attach_managed_finalizer(obj)
+end
 
 # Default equality for ObjC objects via `isEqual:`. Specific classes can
 # override this for a faster path (NSString, NSURL, etc. already do).
@@ -75,7 +165,7 @@ Base.cconvert(::Type{NSRange}, r::UnitRange{<:Integer}) = NSRange(first(r), leng
 
 export NSValue
 
-@objcwrapper NSValue <: NSObject
+@objcwrapper managed = false NSValue <: NSObject
 
 Base.:(==)(v1::NSValue, v2::NSValue) =
     @objc [v1::id{NSValue} isEqualToValue:v2::id{NSValue}]::Bool
@@ -145,7 +235,7 @@ end
 
 export NSNumber
 
-@objcwrapper NSNumber <: NSObject
+@objcwrapper managed = false NSNumber <: NSObject
 
 @objcproperties NSNumber begin
     @autoproperty boolValue::Bool
@@ -196,7 +286,7 @@ end
 
 export NSDecimalNumber, NaNDecimalNumber
 
-@objcwrapper NSDecimalNumber <: NSNumber
+@objcwrapper managed = false NSDecimalNumber <: NSNumber
 @objcproperties NSDecimalNumber begin
     #@autoproperty defaultBehavior::NSDecimalNumberBehaviors
     @autoproperty decimalValue::NSDecimal
@@ -246,11 +336,11 @@ Base.isless(a::NSDecimalNumber, b::NSDecimalNumber) = compare(a, b) == NSOrdered
 
 export NSCopying
 
-@objcwrapper immutable = false NSCopying <: NSObject
+@objcwrapper NSCopying <: NSObject
 
 export NSData
 
-@objcwrapper immutable = false NSData <: NSObject
+@objcwrapper NSData <: NSObject
 
 export NSString
 
@@ -292,7 +382,7 @@ Base.contains(s::AbstractString, t::NSString) =
 
 export NSArray
 
-@objcwrapper NSArray <: NSObject
+@objcwrapper managed = false NSArray <: NSObject
 
 @objcproperties NSArray begin
     @autoproperty count::NSUInteger
@@ -326,7 +416,7 @@ Vector{T}(arr::NSArray) where {T} = convert(Vector{T}, arr)
 
 export NSDictionary
 
-@objcwrapper NSDictionary <: NSObject
+@objcwrapper managed = false NSDictionary <: NSObject
 
 @objcproperties NSDictionary begin
     @autoproperty count::NSUInteger
@@ -380,17 +470,15 @@ end
 # TODO: userInfo
 
 function NSError(domain, code)
-    err = @objc [NSError errorWithDomain:domain::id{NSString}
-                        code:code::NSInteger
-                        userInfo:nil::id{NSDictionary}]::id{NSError}
-    return NSError(err)
+    return @objc [NSError errorWithDomain:domain::id{NSString}
+                         code:code::NSInteger
+                         userInfo:nil::id{NSDictionary}]::NSError
 end
 
 function NSError(domain, code, userInfo)
-    err = @objc [NSError errorWithDomain:domain::id{NSString}
-                        code:code::NSInteger
-                        userInfo:userInfo::id{NSDictionary}]::id{NSError}
-    return NSError(err)
+    return @objc [NSError errorWithDomain:domain::id{NSString}
+                         code:code::NSInteger
+                         userInfo:userInfo::id{NSDictionary}]::NSError
 end
 
 function Base.showerror(io::IO, err::NSError)
@@ -421,7 +509,7 @@ export NSHost, current_host, hostname
     @autoproperty localizedName::id{NSString}
 end
 
-current_host() = NSHost(@objc [NSHost currentHost]::id{NSHost})
+current_host() = @objc [NSHost currentHost]::NSHost
 hostname() = unsafe_string(current_host().localizedName.UTF8String)
 
 
@@ -430,9 +518,9 @@ export NSBundle, load_framework
 @objcwrapper NSBundle <: NSObject
 
 function NSBundle(path::Union{String,NSString})
-    ptr = @objc [NSBundle bundleWithPath:path::id{NSString}]::id{NSBundle}
-    ptr == nil && error("Couldn't find bundle '$path'")
-    NSBundle(ptr)
+    bundle = @objc [NSBundle bundleWithPath:path::id{NSString}]::Union{Nothing,NSBundle}
+    bundle === nothing && error("Couldn't find bundle '$path'")
+    return bundle
 end
 
 function load(bundle::NSBundle)
@@ -445,7 +533,7 @@ load_framework(name) = load(NSBundle("/System/Library/Frameworks/$name.framework
 
 export NSURL, NSFileURL
 
-@objcwrapper NSURL <: NSObject
+@objcwrapper managed = false NSURL <: NSObject
 
 @objcproperties NSURL begin
     # Querying an NSURL
@@ -510,7 +598,7 @@ end
 NSConcreteGlobalBlock() = cglobal(:_NSConcreteGlobalBlock)
 NSConcreteStackBlock()  = cglobal(:_NSConcreteStackBlock)
 
-@objcwrapper NSBlock <: NSObject
+@objcwrapper managed = false NSBlock <: NSObject
 
 function Base.copy(block::NSBlock)
     @objc [block::id{NSBlock} copy]::id{NSBlock}
@@ -519,7 +607,7 @@ end
 
 export NSAutoreleasePool, @autoreleasepool, drain
 
-@objcwrapper NSAutoreleasePool <: NSObject
+@objcwrapper managed = false NSAutoreleasePool <: NSObject
 
 """
     NSAutoreleasePool()
@@ -687,6 +775,6 @@ end
     @autoproperty operatingSystemVersion::NSOperatingSystemVersion
 end
 
-NSProcessInfo() = NSProcessInfo(@objc [NSProcessInfo processInfo]::id{NSProcessInfo})
+NSProcessInfo() = @objc [NSProcessInfo processInfo]::NSProcessInfo
 
 end

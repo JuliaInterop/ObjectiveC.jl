@@ -3,13 +3,19 @@ export @objc, @objcwrapper, @objcproperties, @objcblock
 
 # `Object` is parameterized by its `Kind` (declared in primitives.jl). Each
 # `@objcwrapper Foo <: Bar` emits an abstract `FooKind <: BarKind`, a concrete
-# `struct Foo <: Object{FooKind}`, and a `const FooLike = Object{<:FooKind}`
-# alias. Polymorphic methods are written `f(x::FooLike) = …` — ordinary Julia
+# `struct Foo <: Object{FooKind}` (or `mutable struct` for managed wrappers),
+# and a `const FooLike = Object{<:FooKind}` alias. Polymorphic methods are
+# written `f(x::FooLike) = …` — ordinary Julia
 # subtyping then matches `Foo` and every wrapped subclass.
 
 # `objc_parent` walks the wrapper hierarchy for `@objcproperties`'s property
 # chain (which inherits ancestors' getters/setters).
 objc_parent(::Type{<:Object}) = nothing
+
+# `managed=true` wrappers participate in explicit ownership helpers and in
+# ARC-style `@objc` managed returns. Keep this as a trait instead of deriving
+# from mutability so the ownership contract has one source of truth.
+is_managed_wrapper(::Type) = false
 
 
 # Method Calling
@@ -65,6 +71,71 @@ function objc_label(typ)
         return typ
     else
         return Symbol(string(typ))
+    end
+end
+
+function method_family(sel::AbstractString)
+    head = replace(first(split(sel, ':'; limit=2)), r"^_+" => "")
+    for family in ("alloc", "new", "copy", "mutableCopy", "init")
+        startswith(head, family) || continue
+        family_end = ncodeunits(family)
+        if ncodeunits(head) == family_end
+            return Symbol(family)
+        end
+        next = head[family_end + 1]
+        'a' <= next <= 'z' || return Symbol(family)
+    end
+    return nothing
+end
+
+function nullable_object(rettyp)
+    rettyp isa Union || return nothing
+    typs = Base.uniontypes(rettyp)
+    length(typs) == 2 || return nothing
+    if typs[1] === Nothing
+        objtyp = typs[2]
+    elseif typs[2] === Nothing
+        objtyp = typs[1]
+    else
+        return nothing
+    end
+    objtyp <: Object || return nothing
+    return objtyp
+end
+
+function objc_ccall_rettyp(rettyp)
+    objtyp = nullable_object(rettyp)
+    objtyp !== nothing && return id{objtyp}
+    return rettyp <: Object ? id{rettyp} : rettyp
+end
+
+function objc_wrap_return(ret, rettyp, sel)
+    objtyp = nullable_object(rettyp)
+    family = method_family(sel)
+    if objtyp !== nothing
+        wrap = if is_managed_wrapper(objtyp)
+            if family === nothing
+                :($ObjectiveC.Foundation.retain($objtyp, $ret))
+            else
+                :($ObjectiveC.Foundation.adopt($objtyp, $ret))
+            end
+        else
+            family === nothing || error("ObjectiveC call: owned-family selector `$sel` cannot return unmanaged wrapper $objtyp; use `::id{$objtyp}` and release manually, or declare the wrapper with `managed=true`")
+            :($objtyp($ret))
+        end
+        return :($ret == $ObjectiveC.nil ? nothing : $wrap)
+    end
+
+    rettyp <: Object || return ret
+    if is_managed_wrapper(rettyp)
+        if family === nothing
+            return :($ObjectiveC.Foundation.retain($rettyp, $ret))
+        else
+            return :($ObjectiveC.Foundation.adopt($rettyp, $ret))
+        end
+    else
+        family === nothing || error("ObjectiveC call: owned-family selector `$sel` cannot return unmanaged wrapper $rettyp; use `::id{$rettyp}` and release manually, or declare the wrapper with `managed=true`")
+        return :($rettyp($ret))
     end
 end
 
@@ -244,7 +315,8 @@ end
 # mark the generated expression inline while keeping the traced send emitted once.
 function class_message(class_name, msg, rettyp, argtyps, argvals)
     # We follow Julia's ABI implementation, so ccall/@ccall will handle the sret box.
-    send = emit_msgsend(:class, :(Ptr{Cvoid}), rettyp, argtyps, argvals)
+    send = emit_msgsend(:class, :(Ptr{Cvoid}), objc_ccall_rettyp(rettyp), argtyps, argvals)
+    wrap = objc_wrap_return(:raw_ret, rettyp, msg)
 
     quote
         $(Expr(:meta, :inline))
@@ -262,7 +334,8 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
         # Runtime tracing hook (see tracing.jl): one global read + predicted branch when off.
         obj_sub = tracing_subscriber[]
         obj_t0 = obj_sub == C_NULL ? UInt64(0) : tracing_clock()
-        ret = $send
+        raw_ret = $send
+        ret = $wrap
         obj_sub == C_NULL || tracing_dispatch(obj_sub, $(QuoteNode(Symbol(class_name))),
                                               $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
         @static if $tracing
@@ -279,7 +352,8 @@ end
 function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_label=:id)
     # TODO: use the instance type `typ` to verify when in validation mode?
     # We follow Julia's ABI implementation, so ccall/@ccall will handle the sret box.
-    send = emit_msgsend(instance, :(id{Object}), rettyp, argtyps, argvals)
+    send = emit_msgsend(instance, :(id{Object}), objc_ccall_rettyp(rettyp), argtyps, argvals)
+    wrap = objc_wrap_return(:raw_ret, rettyp, msg)
 
     quote
         $(Expr(:meta, :inline))
@@ -298,7 +372,8 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_la
         # Runtime tracing hook (see tracing.jl): one global read + predicted branch when off.
         obj_sub = tracing_subscriber[]
         obj_t0 = obj_sub == C_NULL ? UInt64(0) : tracing_clock()
-        ret = $send
+        raw_ret = $send
+        ret = $wrap
         obj_sub == C_NULL || tracing_dispatch(obj_sub, $(QuoteNode(class_label)),
                                               $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
         @static if $tracing
@@ -332,7 +407,8 @@ Each declaration generates three names:
   * an abstract `nameKind <: superKind` in a parallel lattice mirroring the
     ObjC class hierarchy;
   * a concrete `struct name <: Object{nameKind}` (or `mutable struct` when
-    `immutable=false`) holding a single `ptr::id{name}` field;
+    `managed=true`) holding a `ptr::id{name}` field; managed wrappers also
+    carry an atomic ownership flag used by eager `release`;
   * a `const nameLike = Object{<:nameKind}` alias for use in polymorphic
     method signatures (not exported — it's a tool for writing methods, not
     part of the user-facing API).
@@ -342,7 +418,8 @@ later `@objcwrapper Sub <: name`. Write polymorphic methods against the
 `Like` alias instead:
 
 ```julia
-release(obj::NSObjectLike) = @objc [obj::id{NSObject} release]::Cvoid
+is_kind_of(obj::NSObjectLike, cls::Class) =
+    @objc [obj::id{NSObject} isKindOfClass:cls::Class]::Bool
 ```
 
 Plain leaf methods are appropriate when the class has no wrapped subclasses,
@@ -350,13 +427,32 @@ or when you specifically want to refuse them.
 
 Keyword arguments:
 
-  * `immutable`: if `true` (default), define the wrapper as an immutable struct.
-    Should be disabled when you want to attach finalizers (e.g., for objects
-    that need explicit `release`).
+  * `managed`: if `true` (the default), define the wrapper as a mutable struct
+    that can participate in explicit Objective-C ownership via `adopt(T, ptr)`
+    and `retain(T, ptr)`. The bare `T(ptr)` constructor never takes ownership
+    or attaches a finalizer; creation sites must choose `adopt` for +1 pointers
+    from `new`/`alloc`/`copy`/`mutableCopy` families, or `retain` for borrowed
+    +0 pointers. `@objc [...]::T` does this automatically for managed
+    wrappers, using the selector's method family to choose `adopt` or `retain`.
+  * `managed=false`: opt out of ownership. The wrapper is immutable and
+    `isbits`, so values are cheap to pass and store densely, but they never
+    retain or release the underlying Objective-C object. `T(ptr)` and
+    `@objc [...]::T` produce borrowed references; `adopt(T, ptr)` and
+    `retain(T, ptr)` throw. Owned-family methods such as `new`, `alloc`,
+    `copy`, `mutableCopy`, and `init` must not return directly as an unmanaged
+    wrapper, because that would leak the +1 object; use `::id{T}` and release
+    manually or keep the wrapper managed.
+    `::Union{Nothing,T}` is supported for both managed and unmanaged wrappers:
+    non-`nil` managed results follow the same `adopt`/`retain` behavior as
+    `::T`, while non-`nil` unmanaged results are borrowed wrappers.
+    Use `managed=false` only for curated exceptions: Swift-style value bridges
+    such as strings, numbers, containers, and URLs; control/special objects
+    such as autorelease pools, blocks, or dispatch objects; or resources with
+    a bespoke singleton, pooled, or externally synchronized lifetime.
   * `availability`: a `PlatformAvailability` describing the OS/version
     availability of the class.
-  * `comparison`: if `true` (default `false`), define `==` and `hash` for the
-    wrapper class. Mostly useful for `mutable struct` wrappers.
+  * `comparison`: if `true` (default `managed`), define `==` and `hash` for the
+    wrapper class.
 """
 macro objcwrapper(ex...)
     def = ex[end]
@@ -364,7 +460,7 @@ macro objcwrapper(ex...)
 
     # parse kwargs
     comparison = nothing
-    immutable = nothing
+    managed = nothing
     availability = nothing
     for kw in kwargs
         if kw isa Expr && kw.head == :(=)
@@ -372,9 +468,9 @@ macro objcwrapper(ex...)
             if kw == :comparison
                 value isa Bool || wrappererror("comparison keyword argument must be a literal boolean")
                 comparison = value
-            elseif kw == :immutable
-                value isa Bool || wrappererror("immutable keyword argument must be a literal boolean")
-                immutable = value
+            elseif kw == :managed
+                value isa Bool || wrappererror("managed keyword argument must be a literal boolean")
+                managed = value
             elseif kw == :availability
                 availability = get_avail_exprs(__module__, value)
             else
@@ -384,8 +480,8 @@ macro objcwrapper(ex...)
             wrappererror("invalid keyword argument: $kw")
         end
     end
-    immutable = something(immutable, true)
-    comparison = something(comparison, !immutable)
+    managed = something(managed, true)
+    comparison = something(comparison, managed)
     availability = something(availability, PlatformAvailability[])
 
     # parse class definition
@@ -408,41 +504,41 @@ macro objcwrapper(ex...)
     kindname = Symbol(name, "Kind")
     likename = Symbol(name, "Like")
 
-    # define the concrete struct. The constructor checks availability and rejects nil.
-    structdef = if immutable
+    # Define the concrete struct. The constructor checks availability and
+    # rejects nil. Managed wrappers also track whether this Julia object still
+    # owns the single +1 reference its finalizer/release should consume.
+    structbody = if managed
         quote
-            struct $name <: $ObjectiveC.Object{$kindname}
-                ptr::$ObjectiveC.id{$name}
-                function $name(ptr::$ObjectiveC.id)
-                    @static if !$ObjectiveC.is_available($availability)
-                        throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
-                    end
-                    ptr == $ObjectiveC.nil && throw(UndefRefError())
-                    new(ptr)
+            ptr::$ObjectiveC.id{$name}
+            @atomic owned::Bool
+            function $name(ptr::$ObjectiveC.id)
+                @static if !$ObjectiveC.is_available($availability)
+                    throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
                 end
+                ptr == $ObjectiveC.nil && throw(UndefRefError())
+                new(ptr, false)
             end
         end
     else
         quote
-            mutable struct $name <: $ObjectiveC.Object{$kindname}
-                ptr::$ObjectiveC.id{$name}
-                function $name(ptr::$ObjectiveC.id)
-                    @static if !$ObjectiveC.is_available($availability)
-                        throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
-                    end
-                    ptr == $ObjectiveC.nil && throw(UndefRefError())
-                    new(ptr)
+            ptr::$ObjectiveC.id{$name}
+            function $name(ptr::$ObjectiveC.id)
+                @static if !$ObjectiveC.is_available($availability)
+                    throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
                 end
+                ptr == $ObjectiveC.nil && throw(UndefRefError())
+                new(ptr)
             end
         end
     end
+    structdef = Expr(:struct, managed, :($name <: $ObjectiveC.Object{$kindname}), structbody)
 
     ex = quote
         # Kind has to come *before* the struct definition so the supertype
         # clause `Object{$kindname}` can resolve it.
         abstract type $kindname <: $ObjectiveC.classkind($super) end
 
-        $(structdef.args...)
+        $structdef
 
         # Polymorphic alias: `Object{<:$kindname}` matches the concrete leaf
         # and every wrapped subclass via native Julia subtyping. Not
@@ -456,6 +552,7 @@ macro objcwrapper(ex...)
 
         # record the immediate ObjC parent for the property-dispatch chain.
         $ObjectiveC.objc_parent(::Type{$name}) = $super
+        $ObjectiveC.is_managed_wrapper(::Type{$name}) = $managed
 
         # default property forwarders. `@objcproperties` may override
         # `objc_getproperty`/`objc_setproperty!` per class to install
@@ -643,7 +740,19 @@ macro objcproperties(typ, ex)
             else
                 property
             end
-            getproperty_ex = objcm(__module__, :([object::id{$(esc(typ))} $getterproperty]::$srcTyp))
+            if Meta.isexpr(srcTyp, :curly) && srcTyp.args[1] == :id
+                objTyp = srcTyp.args[2]
+                retTyp = if is_managed_wrapper(Base.eval(__module__, objTyp))
+                    :(Union{Nothing, $objTyp})
+                else
+                    srcTyp
+                end
+            else
+                objTyp = nothing
+                retTyp = srcTyp
+            end
+
+            getproperty_ex = objcm(__module__, :([object::id{$(esc(typ))} $getterproperty]::$retTyp))
             getproperty_ex = quote
                 @static if !ObjectiveC.is_available($availability)
                     throw($UnavailableError(Symbol($(esc(typ)), ".", field), $availability))
@@ -651,9 +760,9 @@ macro objcproperties(typ, ex)
                 value = $(Expr(:var"hygienic-scope", getproperty_ex, @__MODULE__, __source__))
             end
 
-            # if we're dealing with a typed object pointer, do a nil check and create an object
-            if Meta.isexpr(srcTyp, :curly) && srcTyp.args[1] == :id
-                objTyp = srcTyp.args[2]
+            # if we're dealing with a typed unmanaged object pointer, do a nil check and create
+            # a borrowed wrapper. Managed object properties use the nullable ARC return above.
+            if objTyp !== nothing && retTyp === srcTyp
                 append!(getproperty_ex.args, (quote
                     value == nil && return nothing
                     value = $(esc(objTyp))(value)
@@ -662,6 +771,11 @@ macro objcproperties(typ, ex)
 
             # convert the value, if necessary
             if dstTyp !== nothing
+                if objTyp !== nothing && retTyp !== srcTyp
+                    append!(getproperty_ex.args, (quote
+                        value === nothing && return nothing
+                    end).args)
+                end
                 append!(getproperty_ex.args, (quote
                     value = convert($(esc(dstTyp)), value)
                 end).args)
