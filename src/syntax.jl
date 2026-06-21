@@ -407,7 +407,8 @@ Each declaration generates three names:
   * an abstract `nameKind <: superKind` in a parallel lattice mirroring the
     ObjC class hierarchy;
   * a concrete `struct name <: Object{nameKind}` (or `mutable struct` when
-    `managed=true`) holding a single `ptr::id{name}` field;
+    `managed=true`) holding a `ptr::id{name}` field; managed wrappers also
+    carry an atomic ownership flag used by eager `release`;
   * a `const nameLike = Object{<:nameKind}` alias for use in polymorphic
     method signatures (not exported — it's a tool for writing methods, not
     part of the user-facing API).
@@ -503,17 +504,34 @@ macro objcwrapper(ex...)
     kindname = Symbol(name, "Kind")
     likename = Symbol(name, "Like")
 
-    # define the concrete struct. The constructor checks availability and rejects nil.
-    structdef = Expr(:struct, managed, :($name <: $ObjectiveC.Object{$kindname}), quote
-        ptr::$ObjectiveC.id{$name}
-        function $name(ptr::$ObjectiveC.id)
-            @static if !$ObjectiveC.is_available($availability)
-                throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
+    # Define the concrete struct. The constructor checks availability and
+    # rejects nil. Managed wrappers also track whether this Julia object still
+    # owns the single +1 reference its finalizer/release should consume.
+    structbody = if managed
+        quote
+            ptr::$ObjectiveC.id{$name}
+            @atomic owned::Bool
+            function $name(ptr::$ObjectiveC.id)
+                @static if !$ObjectiveC.is_available($availability)
+                    throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
+                end
+                ptr == $ObjectiveC.nil && throw(UndefRefError())
+                new(ptr, false)
             end
-            ptr == $ObjectiveC.nil && throw(UndefRefError())
-            new(ptr)
         end
-    end)
+    else
+        quote
+            ptr::$ObjectiveC.id{$name}
+            function $name(ptr::$ObjectiveC.id)
+                @static if !$ObjectiveC.is_available($availability)
+                    throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
+                end
+                ptr == $ObjectiveC.nil && throw(UndefRefError())
+                new(ptr)
+            end
+        end
+    end
+    structdef = Expr(:struct, managed, :($name <: $ObjectiveC.Object{$kindname}), structbody)
 
     ex = quote
         # Kind has to come *before* the struct definition so the supertype

@@ -18,7 +18,7 @@ function Foundation.retain(obj::dispatch_object)
     ccall(:dispatch_retain, Cvoid, (dispatch_object_t,), obj)
 end
 
-function Foundation.release(obj::dispatch_object)
+function Foundation.unsafe_release(obj::dispatch_object)
     ccall(:dispatch_release, Cvoid, (dispatch_object_t,), obj)
 end
 

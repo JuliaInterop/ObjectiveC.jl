@@ -399,6 +399,7 @@ using .Foundation
 
 @objcwrapper TestManagedNSObject <: NSObject
 @objcwrapper managed = false TestUnmanagedNSObject <: NSObject
+@objcwrapper TestUnsafeReleaseNSObject <: NSObject
 
 @objcproperties TestManagedNSObject begin
     @autoproperty selfObject::id{TestManagedNSObject} getter = self
@@ -417,9 +418,20 @@ function borrowed_object_ptr()
     @objc [ptr::id{TestManagedNSObject} autorelease]::id{TestManagedNSObject}
 end
 
-function retain_with_hook_managed_test(ptr)
-    obj = Foundation.retain(TestManagedNSObject, ptr)
-    finalize(obj)
+const unsafe_release_calls = Ref(0)
+
+function Foundation.unsafe_release(obj::TestUnsafeReleaseNSObject)
+    unsafe_release_calls[] += 1
+    @objc [obj::id{Object} release]::Cvoid
+end
+
+function release_stress(n)
+    Base.Threads.@threads for _ in 1:n
+        obj = @objc [NSObject new]::TestManagedNSObject
+        Foundation.release(obj)
+        Foundation.release(obj)
+        finalize(obj)
+    end
     return nothing
 end
 
@@ -427,8 +439,10 @@ end
     @test_throws "unrecognized keyword argument: immutable" macroexpand(
         @__MODULE__, :(@objcwrapper immutable = false TestOldKeyword <: NSObject))
     @test Base.ismutabletype(TestManagedNSObject)
+    @test fieldnames(TestManagedNSObject) == (:ptr, :owned)
     @test ObjectiveC.is_managed_wrapper(TestManagedNSObject)
     @test !Base.ismutabletype(TestUnmanagedNSObject)
+    @test fieldnames(TestUnmanagedNSObject) == (:ptr,)
     @test isbitstype(TestUnmanagedNSObject)
     @test !ObjectiveC.is_managed_wrapper(TestUnmanagedNSObject)
 
@@ -482,7 +496,7 @@ end
     @test obj.retainCount == count + 1
     finalize(obj)
     @test raw.retainCount == count
-    Foundation.release(raw)
+    Foundation.unsafe_release(raw)
 
     ptr = owned_object_ptr()
     raw = TestManagedNSObject(ptr)
@@ -496,7 +510,7 @@ end
     @test obj isa TestUnmanagedNSObject
     @test pointer(obj) == pointer(unowned)
     @test raw.retainCount == count
-    Foundation.release(raw)
+    Foundation.unsafe_release(raw)
 
     str = @objc [NSString stringWithUTF8String:"managed"::Ptr{UInt8}]::TestNSString
     @test str isa TestNSString
@@ -523,7 +537,7 @@ end
         @test_throws ArgumentError Foundation.adopt(TestUnmanagedNSObject, ptr)
         @test_throws ArgumentError Foundation.retain(TestUnmanagedNSObject, ptr)
     finally
-        Foundation.release(raw)
+        Foundation.unsafe_release(raw)
     end
 
     ptr = borrowed_object_ptr()
@@ -536,18 +550,36 @@ end
     finalize(obj)
     @test raw.retainCount == count
 
-    hook_calls = Ref(0)
-    old_hook = Foundation.set_managed_release!(obj -> begin
-        hook_calls[] += 1
-        Foundation.release(obj)
-    end)
-    try
-        ptr = borrowed_object_ptr()
-        retain_with_hook_managed_test(ptr)
-        @test hook_calls[] == 1
-    finally
-        Foundation.set_managed_release!(old_hook)
-    end
+    ptr = owned_object_ptr()
+    raw = TestManagedNSObject(ptr)
+    Foundation.retain(raw)
+    count = raw.retainCount
+    obj = Foundation.adopt(TestManagedNSObject, ptr)
+    @test obj.retainCount == count
+    Foundation.release(obj)
+    @test raw.retainCount == count - 1
+    Foundation.release(obj)
+    @test raw.retainCount == count - 1
+    finalize(obj)
+    @test raw.retainCount == count - 1
+    Foundation.unsafe_release(raw)
+
+    ptr = owned_object_ptr()
+    raw = TestManagedNSObject(ptr)
+    count = raw.retainCount
+    Foundation.release(raw)
+    @test raw.retainCount == count
+    Foundation.unsafe_release(raw)
+
+    unsafe_release_calls[] = 0
+    obj = @objc [NSObject new]::TestUnsafeReleaseNSObject
+    Foundation.release(obj)
+    @test unsafe_release_calls[] == 1
+    Foundation.release(obj)
+    finalize(obj)
+    @test unsafe_release_calls[] == 1
+
+    @test_nowarn release_stress(32 * max(1, Base.Threads.nthreads()))
 end
 
 @testset "foundation" begin

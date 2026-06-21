@@ -20,8 +20,8 @@ const NSUIntegerMax = typemax(NSUInteger)
 
 export NSObject, is_kind_of
 
-ObjectiveC.@public retain, release, autorelease, adopt,
-                   managed_release, set_managed_release!
+ObjectiveC.@public retain, release, checked_release, unsafe_release,
+                   autorelease, adopt
 
 @objcwrapper NSObject <: Object
 
@@ -45,23 +45,46 @@ function Base.show(io::IO, ::MIME"text/plain", obj::NSObjectLike)
 end
 
 """
+    unsafe_release(obj)
+
+Send a raw Objective-C `release` message. This is the primitive release
+operation; package authors may extend it for wrapper families with nonstandard
+release primitives, such as dispatch objects.
+"""
+unsafe_release(obj::Object) =
+    @objc [obj::id{Object} release]::Cvoid
+
+"""
+    checked_release(obj)
+
+Release the owned reference of a managed wrapper at most once. Package authors
+who need to wrap release-time behavior should extend `release(obj::T)` and call
+`checked_release(obj)` from that method.
+"""
+function checked_release(obj::Object)
+    (@atomicswap :acquire_release obj.owned = false) || return nothing
+    unsafe_release(obj)
+    return nothing
+end
+
+"""
     release(obj)
 
-Manually release an Objective-C object. This is for unmanaged wrappers and raw
-manual-ownership code. Do not call it on managed wrappers returned by
-`@objc ...::T`, `adopt(T, ptr)`, or `retain(T, ptr)`: their finalizer will
-release the object. Use `managed=false` wrappers or `::id{T}` returns when you
-need manual ownership.
+Release an Objective-C object.
+
+For managed wrappers, this eagerly releases the wrapper's owned reference and
+is safe to call more than once or before the finalizer runs. For borrowed
+managed wrappers created with the bare `T(ptr)` constructor, this is a no-op.
+For unmanaged wrappers, this sends the raw Objective-C release message.
 """
 release(obj::Object) =
-    @objc [obj::id{Object} release]::Cvoid
+    ObjectiveC.is_managed_wrapper(typeof(obj)) ? checked_release(obj) : unsafe_release(obj)
 
 """
     autorelease(obj)
 
 Manually send `autorelease` to an Objective-C object. This is for unmanaged
-wrappers and raw manual-ownership code; managed wrappers should be left to their
-finalizer.
+wrappers and raw manual-ownership code.
 """
 autorelease(obj::Object) =
     @objc [obj::id{Object} autorelease]::Cvoid
@@ -70,47 +93,14 @@ autorelease(obj::Object) =
     retain(obj)
 
 Manually retain an Objective-C object and return the raw Objective-C result.
-This is for unmanaged wrappers and raw manual-ownership code. Prefer
-`retain(T, ptr)` for borrowed pointers that should become managed wrappers.
+Prefer `retain(T, ptr)` for borrowed pointers that should become managed
+wrappers.
 """
 retain(obj::Object) =
     @objc [obj::id{Object} retain]::Cvoid
 
 is_kind_of(obj::NSObjectLike, class::Class) =
     @objc [obj::id{NSObject} isKindOfClass:class::Class]::Bool
-
-const managed_release_hook = Ref{Any}(nothing)
-
-"""
-    managed_release(obj)
-
-Release a managed Objective-C wrapper from a Julia finalizer. Packages that need
-extra finalizer-time behavior, such as installing an autorelease pool, can
-override the process-wide hook with [`set_managed_release!`](@ref).
-"""
-function managed_release(obj::Object)
-    hook = managed_release_hook[]
-    if hook === nothing
-        release(obj)
-    else
-        hook(obj)
-    end
-    return nothing
-end
-
-"""
-    set_managed_release!(f)
-
-Set the function used by managed wrapper finalizers and return the previous hook.
-The hook is called as `f(obj)`. Passing `nothing` restores the default `release`.
-"""
-function set_managed_release!(f)
-    (f === nothing || f isa Base.Callable) ||
-        throw(ArgumentError("managed release hook must be callable or `nothing`"))
-    old = managed_release_hook[]
-    managed_release_hook[] = f
-    return old
-end
 
 function check_managed_type(::Type{T}) where {T<:Object}
     ObjectiveC.is_managed_wrapper(T) ||
@@ -119,7 +109,8 @@ function check_managed_type(::Type{T}) where {T<:Object}
 end
 
 function attach_managed_finalizer(obj::Object)
-    finalizer(managed_release, obj)
+    @atomic obj.owned = true
+    finalizer(release, obj)
     return obj
 end
 
@@ -129,7 +120,8 @@ end
 Wrap a +1 Objective-C object pointer, such as a result from a `new`, `alloc`,
 `copy`, or `mutableCopy` family method, and release it from a Julia finalizer.
 This does not retain the object. The bare `T(ptr)` constructor is non-owning.
-Do not manually release the returned wrapper.
+You may call `release` on the returned wrapper to release it before the
+finalizer runs.
 """
 function adopt(::Type{T}, ptr::id) where {T<:Object}
     check_managed_type(T)
@@ -142,7 +134,8 @@ end
 Retain a borrowed +0 Objective-C object pointer, wrap it as `T`, and release it
 from a Julia finalizer. Use this for autoreleased objects that must escape their
 autorelease pool.
-Do not manually release the returned wrapper.
+You may call `release` on the returned wrapper to release it before the
+finalizer runs.
 """
 function retain(::Type{T}, ptr::id) where {T<:Object}
     check_managed_type(T)

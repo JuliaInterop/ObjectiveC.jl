@@ -10,13 +10,16 @@
 - Manual ownership helpers such as `retain`, `release`, `autorelease`, and
   `adopt` are public but no longer exported from `ObjectiveC.Foundation`.
   Qualify them or import them explicitly when writing manual-ownership code.
+- `release(obj)` is now ownership-aware for managed wrappers: it eagerly
+  releases the wrapper's owned reference at most once, and a later finalizer or
+  repeated `release` call is a no-op.
 
 ## Added
 
 - Added `adopt(T, ptr)` for +1 Objective-C pointers and `retain(T, ptr)` for
   borrowed +0 pointers, both attaching a release finalizer.
-- Added a managed-release hook for packages that need custom finalizer-time
-  release behavior.
+- Added `checked_release` and `unsafe_release` as public extension seams for
+  packages that need custom release behavior.
 - Added ARC-style managed returns to `@objc`: `::id{T}` remains raw, while
   `::T` wraps Objective-C object pointers and chooses `adopt` or `retain`
   from the selector's method family.
