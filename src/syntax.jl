@@ -75,7 +75,7 @@ function objc_label(typ)
 end
 
 function method_family(sel::AbstractString)
-    head = first(split(sel, ':'; limit=2))
+    head = replace(first(split(sel, ':'; limit=2)), r"^_+" => "")
     for family in ("alloc", "new", "copy", "mutableCopy", "init")
         startswith(head, family) || continue
         family_end = ncodeunits(family)
@@ -113,12 +113,15 @@ function objc_wrap_return(ret, rettyp, sel)
     objtyp = nullable_object(rettyp)
     family = method_family(sel)
     if objtyp !== nothing
-        is_managed_wrapper(objtyp) ||
-            error("ObjectiveC call: nullable ARC return requires managed wrapper $objtyp")
-        wrap = if family === nothing
-            :($ObjectiveC.Foundation.retain($objtyp, $ret))
+        wrap = if is_managed_wrapper(objtyp)
+            if family === nothing
+                :($ObjectiveC.Foundation.retain($objtyp, $ret))
+            else
+                :($ObjectiveC.Foundation.adopt($objtyp, $ret))
+            end
         else
-            :($ObjectiveC.Foundation.adopt($objtyp, $ret))
+            family === nothing || error("ObjectiveC call: owned-family selector `$sel` cannot return unmanaged wrapper $objtyp; use `::id{$objtyp}` and release manually, or declare the wrapper with `managed=true`")
+            :($objtyp($ret))
         end
         return :($ret == $ObjectiveC.nil ? nothing : $wrap)
     end
@@ -414,7 +417,8 @@ later `@objcwrapper Sub <: name`. Write polymorphic methods against the
 `Like` alias instead:
 
 ```julia
-release(obj::NSObjectLike) = @objc [obj::id{NSObject} release]::Cvoid
+is_kind_of(obj::NSObjectLike, cls::Class) =
+    @objc [obj::id{NSObject} isKindOfClass:cls::Class]::Bool
 ```
 
 Plain leaf methods are appropriate when the class has no wrapped subclasses,
@@ -437,6 +441,9 @@ Keyword arguments:
     `copy`, `mutableCopy`, and `init` must not return directly as an unmanaged
     wrapper, because that would leak the +1 object; use `::id{T}` and release
     manually or keep the wrapper managed.
+    `::Union{Nothing,T}` is supported for both managed and unmanaged wrappers:
+    non-`nil` managed results follow the same `adopt`/`retain` behavior as
+    `::T`, while non-`nil` unmanaged results are borrowed wrappers.
     Use `managed=false` only for curated exceptions: Swift-style value bridges
     such as strings, numbers, containers, and URLs; control/special objects
     such as autorelease pools, blocks, or dispatch objects; or resources with

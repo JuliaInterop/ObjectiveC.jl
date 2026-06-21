@@ -418,7 +418,7 @@ function borrowed_object_ptr()
 end
 
 function retain_with_hook_managed_test(ptr)
-    obj = retain(TestManagedNSObject, ptr)
+    obj = Foundation.retain(TestManagedNSObject, ptr)
     finalize(obj)
     return nothing
 end
@@ -435,11 +435,15 @@ end
     @test ObjectiveC.method_family("newSynchronizedEvent") === :new
     @test ObjectiveC.method_family("newsletter") === nothing
     @test ObjectiveC.method_family("initWithString:") === :init
+    @test ObjectiveC.method_family("_initWithString:") === :init
     @test ObjectiveC.method_family("copyItemAtURL:toURL:error:") === :copy
+    @test ObjectiveC.method_family("__copy") === :copy
     @test ObjectiveC.method_family("mutableCopyWithZone:") === :mutableCopy
 
     @test_throws "owned-family selector `new` cannot return unmanaged wrapper" macroexpand(
         @__MODULE__, :(@objc [NSObject new]::TestUnmanagedNSObject))
+    @test_throws "owned-family selector `new` cannot return unmanaged wrapper" macroexpand(
+        @__MODULE__, :(@objc [NSObject new]::Union{Nothing,TestUnmanagedNSObject}))
 
     obj = @objc [NSObject new]::TestManagedNSObject
     @test obj isa TestManagedNSObject
@@ -478,7 +482,7 @@ end
     @test obj.retainCount == count + 1
     finalize(obj)
     @test raw.retainCount == count
-    release(raw)
+    Foundation.release(raw)
 
     ptr = owned_object_ptr()
     raw = TestManagedNSObject(ptr)
@@ -488,36 +492,44 @@ end
     @test obj isa TestUnmanagedNSObject
     @test pointer(obj) == pointer(unowned)
     @test raw.retainCount == count
-    release(raw)
+    obj = @objc [unowned::id{TestUnmanagedNSObject} self]::Union{Nothing,TestUnmanagedNSObject}
+    @test obj isa TestUnmanagedNSObject
+    @test pointer(obj) == pointer(unowned)
+    @test raw.retainCount == count
+    Foundation.release(raw)
 
     str = @objc [NSString stringWithUTF8String:"managed"::Ptr{UInt8}]::TestNSString
     @test str isa TestNSString
     @test str.length == length("managed")
+    str = @objc [NSString stringWithUTF8String:"nullable"::Ptr{UInt8}]::Union{Nothing,NSString}
+    @test str isa NSString
+    @test String(str) == "nullable"
 
     dict = NSDictionary()
     key = NSString("missing")
     @test (@objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::Union{Nothing,TestManagedNSObject}) === nothing
+    @test (@objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::Union{Nothing,TestUnmanagedNSObject}) === nothing
 
     ptr = owned_object_ptr()
     raw = TestManagedNSObject(ptr)
     count = raw.retainCount
-    obj = adopt(TestManagedNSObject, ptr)
+    obj = Foundation.adopt(TestManagedNSObject, ptr)
     @test obj.retainCount == count
     finalize(obj)
 
     ptr = owned_object_ptr()
     raw = TestManagedNSObject(ptr)
     try
-        @test_throws ArgumentError adopt(TestUnmanagedNSObject, ptr)
-        @test_throws ArgumentError retain(TestUnmanagedNSObject, ptr)
+        @test_throws ArgumentError Foundation.adopt(TestUnmanagedNSObject, ptr)
+        @test_throws ArgumentError Foundation.retain(TestUnmanagedNSObject, ptr)
     finally
-        release(raw)
+        Foundation.release(raw)
     end
 
     ptr = borrowed_object_ptr()
     raw = TestManagedNSObject(ptr)
     count = raw.retainCount
-    obj = retain(TestManagedNSObject, ptr)
+    obj = Foundation.retain(TestManagedNSObject, ptr)
     @test obj.retainCount == count + 1
     @test obj == raw
     @test hash(obj) == hash(raw)
@@ -525,16 +537,16 @@ end
     @test raw.retainCount == count
 
     hook_calls = Ref(0)
-    old_hook = set_managed_release!(obj -> begin
+    old_hook = Foundation.set_managed_release!(obj -> begin
         hook_calls[] += 1
-        release(obj)
+        Foundation.release(obj)
     end)
     try
         ptr = borrowed_object_ptr()
         retain_with_hook_managed_test(ptr)
         @test hook_calls[] == 1
     finally
-        set_managed_release!(old_hook)
+        Foundation.set_managed_release!(old_hook)
     end
 end
 
@@ -764,12 +776,12 @@ end
     GC.@preserve arr begin
         data = dispatch_data(pointer(arr), sizeof(arr))
 
-        retain(data)
-        release(data)
+        Foundation.retain(data)
+        Foundation.release(data)
 
         @test sizeof(data) == sizeof(arr)
 
-        release(data)
+        Foundation.release(data)
     end
 end
 
