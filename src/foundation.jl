@@ -18,10 +18,9 @@ const NSIntegerMax = typemax(NSInteger)
 const NSUIntegerMax = typemax(NSUInteger)
 
 
-export NSObject, is_kind_of
+export NSObject, retain, release, autorelease, is_kind_of
 
-ObjectiveC.@public retain, release, checked_release, unsafe_release,
-                   autorelease, adopt
+ObjectiveC.@public checked_release, unsafe_release, adopt
 
 @objcwrapper NSObject <: Object
 
