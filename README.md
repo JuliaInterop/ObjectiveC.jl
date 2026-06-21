@@ -44,6 +44,18 @@ julia> obj = NSValue(obj_ptr)
 NSValue (object of type NSConcreteValue)
 ```
 
+Wrappers are managed by default. A typed Objective-C return such as
+`@objc [NSObject new]::NSObject` creates a Julia wrapper that releases the
+Objective-C object from a finalizer, using Objective-C selector-family rules to
+distinguish owned (`new`/`alloc`/`copy`/`mutableCopy`/`init`) results from
+borrowed results. The bare `T(ptr)` constructor is always non-owning.
+
+Manual ownership helpers are available as public `ObjectiveC.Foundation`
+bindings, but are not exported by default. Do not call `Foundation.release` on
+a managed wrapper returned by `@objc ...::T`, `Foundation.adopt`, or
+`Foundation.retain`; use `managed=false` wrappers or raw `::id{T}` returns when
+you want to manage retains and releases yourself.
+
 
 ## Type model
 

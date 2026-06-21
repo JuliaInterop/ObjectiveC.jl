@@ -7,6 +7,9 @@
   `adopt(T, ptr)`, `retain(T, ptr)`, and ARC-style `@objc [...]::T` returns.
   Use `managed=false` only for borrowed/value-like wrappers whose lifetime is
   owned elsewhere; those wrappers remain immutable and `isbits`.
+- Manual ownership helpers such as `retain`, `release`, `autorelease`, and
+  `adopt` are public but no longer exported from `ObjectiveC.Foundation`.
+  Qualify them or import them explicitly when writing manual-ownership code.
 
 ## Added
 
@@ -17,8 +20,8 @@
 - Added ARC-style managed returns to `@objc`: `::id{T}` remains raw, while
   `::T` wraps Objective-C object pointers and chooses `adopt` or `retain`
   from the selector's method family.
-- Added nullable ARC returns to `@objc`: `::Union{Nothing,T}` returns `nothing`
-  for nil pointers and otherwise applies the same managed ownership behavior
-  as `::T`.
+- Added nullable object returns to `@objc`: `::Union{Nothing,T}` returns
+  `nothing` for nil pointers. Managed wrapper results apply the same ownership
+  behavior as `::T`; unmanaged wrapper results are borrowed wrappers.
 - Added a macro guard rejecting owned-family `@objc [...]::T` returns into
   unmanaged wrappers, which would otherwise leak the +1 object.
