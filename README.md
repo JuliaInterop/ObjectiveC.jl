@@ -37,23 +37,12 @@ track of `id` pointers, it is possible to have ObjectiveC.jl do this for you:
 ```julia
 julia> @objcwrapper NSValue
 
-julia> obj_ptr = @objc [NSValue valueWithPointer:C_NULL::Ptr{Cvoid}]::id{NSValue}
-id{NSValue}(0x00006000023cfca0)
-
-julia> obj = NSValue(obj_ptr)
+julia> obj = @objc [NSValue valueWithPointer:C_NULL::Ptr{Cvoid}]::NSValue
 NSValue (object of type NSConcreteValue)
 ```
 
-Wrappers are managed by default. A typed Objective-C return such as
-`@objc [NSObject new]::NSObject` creates a Julia wrapper that releases the
-Objective-C object from a finalizer, using Objective-C selector-family rules to
-distinguish owned (`new`/`alloc`/`copy`/`mutableCopy`/`init`) results from
-borrowed results. The bare `T(ptr)` constructor is always non-owning.
-
-Manual ownership helpers are available as public `ObjectiveC.Foundation`
-bindings, but are not exported by default. `Foundation.release` is ownership
-aware: on managed wrappers it eagerly releases the wrapper's owned reference at
-most once, and on unmanaged wrappers it sends the raw Objective-C `release`.
+This object will be automatically released by the Julia garbage collector when it is no
+longer referenced.
 
 
 ## Type model
@@ -102,8 +91,8 @@ Each wrapper is either managed or not. You pick per class with the `managed` key
   finalizer that releases the object once the wrapper is collected. You can also call
   `release` to free the wrapper's owned reference before the garbage collector gets there.
 * an unmanaged wrapper (`managed=false`) is an immutable, `isbits` borrowed reference. It
-  never retains or releases anything, and it counts on the object's lifetime being guaranteed
-  somewhere else. These are cheap to pass around.
+  never automatically retains or releases anything, and it counts on the object's lifetime
+  being guaranteed somewhere else. These are cheap to pass around.
 
 ### ARC-style returns
 
@@ -160,9 +149,9 @@ wrapper. This is unsafe, and only makes sense in a handful of cases:
   release is coordinated elsewhere.
 
 Beware that this also opts out of the idempotency of `release`. If you call `release` on an
-unmanaged wrapper, it sends the raw `release` message to the object, which may crash if the
-object is already freed. It is thus advised not to opt out of automatic memory management
-when the lifetime of an object is non-trivial.
+unmanaged wrapper, it sends the raw `release` message to the object, which may crash if used
+incorrectly. It is thus advised not to opt out of automatic memory management when the
+lifetime of an object is non-trivial.
 
 
 ## Properties
