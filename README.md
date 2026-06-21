@@ -159,7 +159,10 @@ wrapper. This is unsafe, and only makes sense in a handful of cases:
 * objects something else already keeps alive: singletons, pooled objects, or resources whose
   release is coordinated elsewhere.
 
-Calling `retain` or `release` on unmanaged objects is a no-op.
+Beware that this also opts out of the idempotency of `release`. If you call `release` on an
+unmanaged wrapper, it sends the raw `release` message to the object, which may crash if the
+object is already freed. It is thus advised not to opt out of automatic memory management
+when the lifetime of an object is non-trivial.
 
 
 ## Properties
