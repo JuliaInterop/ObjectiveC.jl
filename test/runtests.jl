@@ -428,8 +428,8 @@ end
 function release_stress(n)
     Base.Threads.@threads for _ in 1:n
         obj = @objc [NSObject new]::TestManagedNSObject
-        Foundation.release(obj)
-        Foundation.release(obj)
+        release(obj)
+        release(obj)
         finalize(obj)
     end
     return nothing
@@ -535,7 +535,7 @@ end
     raw = TestManagedNSObject(ptr)
     try
         @test_throws ArgumentError Foundation.adopt(TestUnmanagedNSObject, ptr)
-        @test_throws ArgumentError Foundation.retain(TestUnmanagedNSObject, ptr)
+        @test_throws ArgumentError retain(TestUnmanagedNSObject, ptr)
     finally
         Foundation.unsafe_release(raw)
     end
@@ -543,7 +543,7 @@ end
     ptr = borrowed_object_ptr()
     raw = TestManagedNSObject(ptr)
     count = raw.retainCount
-    obj = Foundation.retain(TestManagedNSObject, ptr)
+    obj = retain(TestManagedNSObject, ptr)
     @test obj.retainCount == count + 1
     @test obj == raw
     @test hash(obj) == hash(raw)
@@ -552,13 +552,13 @@ end
 
     ptr = owned_object_ptr()
     raw = TestManagedNSObject(ptr)
-    Foundation.retain(raw)
+    retain(raw)
     count = raw.retainCount
     obj = Foundation.adopt(TestManagedNSObject, ptr)
     @test obj.retainCount == count
-    Foundation.release(obj)
+    release(obj)
     @test raw.retainCount == count - 1
-    Foundation.release(obj)
+    release(obj)
     @test raw.retainCount == count - 1
     finalize(obj)
     @test raw.retainCount == count - 1
@@ -567,15 +567,15 @@ end
     ptr = owned_object_ptr()
     raw = TestManagedNSObject(ptr)
     count = raw.retainCount
-    Foundation.release(raw)
+    release(raw)
     @test raw.retainCount == count
     Foundation.unsafe_release(raw)
 
     unsafe_release_calls[] = 0
     obj = @objc [NSObject new]::TestUnsafeReleaseNSObject
-    Foundation.release(obj)
+    release(obj)
     @test unsafe_release_calls[] == 1
-    Foundation.release(obj)
+    release(obj)
     finalize(obj)
     @test unsafe_release_calls[] == 1
 
@@ -808,12 +808,12 @@ end
     GC.@preserve arr begin
         data = dispatch_data(pointer(arr), sizeof(arr))
 
-        Foundation.retain(data)
-        Foundation.release(data)
+        retain(data)
+        release(data)
 
         @test sizeof(data) == sizeof(arr)
 
-        Foundation.release(data)
+        release(data)
     end
 end
 
