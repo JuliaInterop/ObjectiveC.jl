@@ -534,17 +534,18 @@ macro objcwrapper(ex...)
     kindname = Symbol(name, "Kind")
     likename = Symbol(name, "Like")
 
-    # Define the concrete struct. The constructor checks availability and
-    # rejects nil. Managed wrappers also track whether this Julia object still
-    # owns the single +1 reference its finalizer/release should consume.
+    # Define the concrete struct and check availability during expansion.
+    avail_check = if is_available(availability)
+        nothing
+    else
+        :(throw($UnavailableError(Symbol($(QuoteNode(name))), $availability)))
+    end
     structbody = if managed
         quote
             ptr::$ObjectiveC.id{$name}
             @atomic owned::Bool
             function $name(ptr::$ObjectiveC.id)
-                @static if !$ObjectiveC.is_available($availability)
-                    throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
-                end
+                $avail_check
                 ptr == $ObjectiveC.nil && throw(UndefRefError())
                 new(ptr, false)
             end
@@ -553,9 +554,7 @@ macro objcwrapper(ex...)
         quote
             ptr::$ObjectiveC.id{$name}
             function $name(ptr::$ObjectiveC.id)
-                @static if !$ObjectiveC.is_available($availability)
-                    throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
-                end
+                $avail_check
                 ptr == $ObjectiveC.nil && throw(UndefRefError())
                 new(ptr)
             end
@@ -782,11 +781,15 @@ macro objcproperties(typ, ex)
                 retTyp = srcTyp
             end
 
+            avail_check = if is_available(availability)
+                nothing
+            else
+                :(throw($UnavailableError(Symbol($(esc(typ)), ".", field), $availability)))
+            end
+
             getproperty_ex = objcm(__module__, :([object::id{$(esc(typ))} $getterproperty]::$retTyp))
             getproperty_ex = quote
-                @static if !ObjectiveC.is_available($availability)
-                    throw($UnavailableError(Symbol($(esc(typ)), ".", field), $availability))
-                end
+                $avail_check
                 value = $(Expr(:var"hygienic-scope", getproperty_ex, @__MODULE__, __source__))
             end
 
