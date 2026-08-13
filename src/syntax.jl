@@ -582,19 +582,6 @@ macro objcwrapper(ex...)
         # record the immediate ObjC parent for the property-dispatch chain.
         $ObjectiveC.objc_parent(::Type{$name}) = $super
         $ObjectiveC.is_managed_wrapper(::Type{$name}) = $managed
-
-        # default property forwarders. `@objcproperties` may override
-        # `objc_getproperty`/`objc_setproperty!` per class to install
-        # autoproperty branches; without that, the chain walks straight to the
-        # parent via `objc_parent`, all the way up to `Object` where it falls
-        # back to `getfield`/`setfield!`. `propertynames` follows the same
-        # chain via `objc_propertynames` so children without their own
-        # `@objcproperties` block still surface their ancestors' properties.
-        Base.getproperty(object::$name, field::Symbol) =
-            $ObjectiveC.objc_getproperty($name, object, field)
-        Base.setproperty!(object::$name, field::Symbol, value::Any) =
-            $ObjectiveC.objc_setproperty!($name, object, field, value)
-        Base.propertynames(::$name) = $ObjectiveC.objc_propertynames($name)
     end
 
     # add optional methods
@@ -629,7 +616,14 @@ Base.unsafe_convert(T::Type{<:id}, arr::idArray) =
     reinterpret(T, pointer(arr.ids))
 
 
-# Property Accesors
+# Property Accessors
+
+# Property access dispatches through the wrapper hierarchy.
+Base.getproperty(object::Object, field::Symbol) =
+    objc_getproperty(typeof(object), object, field)
+Base.setproperty!(object::Object, field::Symbol, value::Any) =
+    objc_setproperty!(typeof(object), object, field, value)
+Base.propertynames(object::Object) = objc_propertynames(typeof(object))
 
 # Default `objc_propertynames` walks the ObjC parent chain. `@objcproperties`
 # emits a more specific method per class that merges the class's own list
