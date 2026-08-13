@@ -104,6 +104,10 @@ end
 end
 
 @testset "@objc macro" begin
+    @test ObjectiveC.resolve_type(@__MODULE__, :(id{Object})) === id{Object}
+    @test ObjectiveC.resolve_type(@__MODULE__, :(Type{<:Object})) == Type{<:Object}
+    @test ObjectiveC.resolve_type(@__MODULE__, esc(:(Type{<:Object}))) == Type{<:Object}
+
     # class methods
     @objc [NSString new]::id{Object}
     data = "test"

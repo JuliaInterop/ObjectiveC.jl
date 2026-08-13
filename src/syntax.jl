@@ -74,6 +74,37 @@ function objc_label(typ)
     end
 end
 
+# Resolve common type expressions without lowering top-level code.
+function try_resolve_type(mod::Module, ex)
+    if ex isa Symbol
+        return Some(getglobal(mod, ex))
+    elseif ex isa GlobalRef
+        return Some(getglobal(ex.mod, ex.name))
+    elseif ex isa QuoteNode
+        return Some(ex.value)
+    elseif Meta.isexpr(ex, :.) && length(ex.args) == 2 && ex.args[2] isa QuoteNode
+        parent = try_resolve_type(mod, ex.args[1])
+        parent === nothing && return nothing
+        return Some(getproperty(something(parent), ex.args[2].value))
+    elseif Meta.isexpr(ex, :curly)
+        args = map(arg -> try_resolve_type(mod, arg), ex.args)
+        any(isnothing, args) && return nothing
+        return Some(Core.apply_type(something.(args)...))
+    elseif !(ex isa Expr)
+        return Some(ex)
+    else
+        return nothing
+    end
+end
+
+function resolve_type(mod::Module, ex)
+    if Meta.isexpr(ex, :escape) || Meta.isexpr(ex, :var"hygienic-scope")
+        return resolve_type(mod, ex.args[1])
+    end
+    typ = try_resolve_type(mod, ex)
+    return typ === nothing ? Base.eval(mod, ex) : something(typ)
+end
+
 function method_family(sel::AbstractString)
     head = replace(first(split(sel, ':'; limit=2)), r"^_+" => "")
     for family in ("alloc", "new", "copy", "mutableCopy", "init")
@@ -147,7 +178,7 @@ function objcm(mod, ex)
     call, rettyp = ex.args
 
     # we need the return type at macro definition time in order to determine the ABI
-    rettyp = Base.eval(mod, rettyp)::Type
+    rettyp = resolve_type(mod, rettyp)::Type
 
     # parse the call
     if Meta.isexpr(call, :vcat)
@@ -741,7 +772,7 @@ macro objcproperties(typ, ex)
             end
             if Meta.isexpr(srcTyp, :curly) && srcTyp.args[1] == :id
                 objTyp = srcTyp.args[2]
-                retTyp = if is_managed_wrapper(Base.eval(__module__, objTyp))
+                retTyp = if is_managed_wrapper(resolve_type(__module__, objTyp))
                     :(Union{Nothing, $objTyp})
                 else
                     srcTyp
@@ -786,9 +817,10 @@ macro objcproperties(typ, ex)
             read_properties[property] = getproperty_ex
 
             if haskey(kwargs, :setter)
-                setproperty_ex = quote
-                    @objc [object::id{$(esc(typ))} $(kwargs[:setter]):value::$(esc(srcTyp))]::Nothing
-                end
+                setproperty_ex = objcm(__module__,
+                    :([object::id{$(esc(typ))} $(kwargs[:setter]):value::$(esc(srcTyp))]::Nothing))
+                setproperty_ex = Expr(:var"hygienic-scope", setproperty_ex,
+                                      @__MODULE__, __source__)
 
                 haskey(write_properties, property) && propertyerror("duplicate property $property")
                 write_properties[property] = setproperty_ex
