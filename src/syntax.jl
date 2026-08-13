@@ -482,7 +482,6 @@ macro objcwrapper(ex...)
     end
     managed = something(managed, true)
     comparison = something(comparison, managed)
-    availability = something(availability, PlatformAvailability[])
 
     # parse class definition
     if Meta.isexpr(def, :(<:))
