@@ -40,6 +40,7 @@ function is_available(f, avail::PlatformAvailability)
         (isnothing(avail.introduced) || f() >= avail.introduced)
 end
 is_available(avails::Vector{<:PlatformAvailability}) = all(is_available.(avails))
+is_available(::Nothing) = true
 
 """
     UnavailableError(symbol::Symbol, minver::VersionNumber)
