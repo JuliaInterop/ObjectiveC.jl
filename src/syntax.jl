@@ -75,23 +75,29 @@ function objc_label(typ)
 end
 
 # Resolve common type expressions without lowering top-level code.
-function try_resolve_type(mod::Module, ex)
+function try_resolve_type(mod::Module, @nospecialize(ex))::Union{Nothing, Some{Any}}
     if ex isa Symbol
-        return Some(getglobal(mod, ex))
+        return Some{Any}(getglobal(mod, ex))
     elseif ex isa GlobalRef
-        return Some(getglobal(ex.mod, ex.name))
+        return Some{Any}(getglobal(ex.mod, ex.name))
     elseif ex isa QuoteNode
-        return Some(ex.value)
+        return Some{Any}(ex.value)
     elseif Meta.isexpr(ex, :.) && length(ex.args) == 2 && ex.args[2] isa QuoteNode
         parent = try_resolve_type(mod, ex.args[1])
         parent === nothing && return nothing
-        return Some(getproperty(something(parent), ex.args[2].value))
+        val = something(parent)
+        val isa Module || return nothing
+        return Some{Any}(getglobal(val, ex.args[2].value))
     elseif Meta.isexpr(ex, :curly)
-        args = map(arg -> try_resolve_type(mod, arg), ex.args)
-        any(isnothing, args) && return nothing
-        return Some(Core.apply_type(something.(args)...))
+        args = Vector{Any}(undef, length(ex.args))
+        for i in 1:length(ex.args)
+            arg = try_resolve_type(mod, ex.args[i])
+            arg === nothing && return nothing
+            args[i] = something(arg)
+        end
+        return Some{Any}(Core.apply_type(args...))
     elseif !(ex isa Expr)
-        return Some(ex)
+        return Some{Any}(ex)
     else
         return nothing
     end
