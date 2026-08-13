@@ -39,7 +39,8 @@ function is_available(f, avail::PlatformAvailability)
         (isnothing(avail.obsoleted) || f() < avail.obsoleted) &&
         (isnothing(avail.introduced) || f() >= avail.introduced)
 end
-is_available(avails::Vector{<:PlatformAvailability}) = all(is_available.(avails))
+is_available(avails::Vector{<:PlatformAvailability}) = all(is_available, avails)
+is_available(::Nothing) = true
 
 """
     UnavailableError(symbol::Symbol, minver::VersionNumber)
@@ -105,4 +106,3 @@ function transform_avail_expr!(expr)
     insert!(expr.args, 1, :PlatformAvailability)
     return expr
 end
-

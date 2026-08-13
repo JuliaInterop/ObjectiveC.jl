@@ -74,6 +74,43 @@ function objc_label(typ)
     end
 end
 
+# Resolve common type expressions without lowering top-level code.
+function try_resolve_type(mod::Module, @nospecialize(ex))::Union{Nothing, Some{Any}}
+    if ex isa Symbol
+        return Some{Any}(getglobal(mod, ex))
+    elseif ex isa GlobalRef
+        return Some{Any}(getglobal(ex.mod, ex.name))
+    elseif ex isa QuoteNode
+        return Some{Any}(ex.value)
+    elseif Meta.isexpr(ex, :.) && length(ex.args) == 2 && ex.args[2] isa QuoteNode
+        parent = try_resolve_type(mod, ex.args[1])
+        parent === nothing && return nothing
+        val = something(parent)
+        val isa Module || return nothing
+        return Some{Any}(getglobal(val, ex.args[2].value))
+    elseif Meta.isexpr(ex, :curly)
+        args = Vector{Any}(undef, length(ex.args))
+        for i in 1:length(ex.args)
+            arg = try_resolve_type(mod, ex.args[i])
+            arg === nothing && return nothing
+            args[i] = something(arg)
+        end
+        return Some{Any}(Core.apply_type(args...))
+    elseif !(ex isa Expr)
+        return Some{Any}(ex)
+    else
+        return nothing
+    end
+end
+
+function resolve_type(mod::Module, ex)
+    if Meta.isexpr(ex, :escape) || Meta.isexpr(ex, :var"hygienic-scope")
+        return resolve_type(mod, ex.args[1])
+    end
+    typ = try_resolve_type(mod, ex)
+    return typ === nothing ? Base.eval(mod, ex) : something(typ)
+end
+
 function method_family(sel::AbstractString)
     head = replace(first(split(sel, ':'; limit=2)), r"^_+" => "")
     for family in ("alloc", "new", "copy", "mutableCopy", "init")
@@ -147,7 +184,7 @@ function objcm(mod, ex)
     call, rettyp = ex.args
 
     # we need the return type at macro definition time in order to determine the ABI
-    rettyp = Base.eval(mod, rettyp)::Type
+    rettyp = resolve_type(mod, rettyp)::Type
 
     # parse the call
     if Meta.isexpr(call, :vcat)
@@ -482,7 +519,6 @@ macro objcwrapper(ex...)
     end
     managed = something(managed, true)
     comparison = something(comparison, managed)
-    availability = something(availability, PlatformAvailability[])
 
     # parse class definition
     if Meta.isexpr(def, :(<:))
@@ -504,17 +540,18 @@ macro objcwrapper(ex...)
     kindname = Symbol(name, "Kind")
     likename = Symbol(name, "Like")
 
-    # Define the concrete struct. The constructor checks availability and
-    # rejects nil. Managed wrappers also track whether this Julia object still
-    # owns the single +1 reference its finalizer/release should consume.
+    # Define the concrete struct and check availability during expansion.
+    avail_check = if is_available(availability)
+        nothing
+    else
+        :(throw($UnavailableError(Symbol($(QuoteNode(name))), $availability)))
+    end
     structbody = if managed
         quote
             ptr::$ObjectiveC.id{$name}
             @atomic owned::Bool
             function $name(ptr::$ObjectiveC.id)
-                @static if !$ObjectiveC.is_available($availability)
-                    throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
-                end
+                $avail_check
                 ptr == $ObjectiveC.nil && throw(UndefRefError())
                 new(ptr, false)
             end
@@ -523,9 +560,7 @@ macro objcwrapper(ex...)
         quote
             ptr::$ObjectiveC.id{$name}
             function $name(ptr::$ObjectiveC.id)
-                @static if !$ObjectiveC.is_available($availability)
-                    throw($UnavailableError(Symbol($(QuoteNode(name))), $availability))
-                end
+                $avail_check
                 ptr == $ObjectiveC.nil && throw(UndefRefError())
                 new(ptr)
             end
@@ -553,19 +588,6 @@ macro objcwrapper(ex...)
         # record the immediate ObjC parent for the property-dispatch chain.
         $ObjectiveC.objc_parent(::Type{$name}) = $super
         $ObjectiveC.is_managed_wrapper(::Type{$name}) = $managed
-
-        # default property forwarders. `@objcproperties` may override
-        # `objc_getproperty`/`objc_setproperty!` per class to install
-        # autoproperty branches; without that, the chain walks straight to the
-        # parent via `objc_parent`, all the way up to `Object` where it falls
-        # back to `getfield`/`setfield!`. `propertynames` follows the same
-        # chain via `objc_propertynames` so children without their own
-        # `@objcproperties` block still surface their ancestors' properties.
-        Base.getproperty(object::$name, field::Symbol) =
-            $ObjectiveC.objc_getproperty($name, object, field)
-        Base.setproperty!(object::$name, field::Symbol, value::Any) =
-            $ObjectiveC.objc_setproperty!($name, object, field, value)
-        Base.propertynames(::$name) = $ObjectiveC.objc_propertynames($name)
     end
 
     # add optional methods
@@ -600,7 +622,14 @@ Base.unsafe_convert(T::Type{<:id}, arr::idArray) =
     reinterpret(T, pointer(arr.ids))
 
 
-# Property Accesors
+# Property Accessors
+
+# Property access dispatches through the wrapper hierarchy.
+Base.getproperty(object::Object, field::Symbol) =
+    objc_getproperty(typeof(object), object, field)
+Base.setproperty!(object::Object, field::Symbol, value::Any) =
+    objc_setproperty!(typeof(object), object, field, value)
+Base.propertynames(object::Object) = objc_propertynames(typeof(object))
 
 # Default `objc_propertynames` walks the ObjC parent chain. `@objcproperties`
 # emits a more specific method per class that merges the class's own list
@@ -742,7 +771,7 @@ macro objcproperties(typ, ex)
             end
             if Meta.isexpr(srcTyp, :curly) && srcTyp.args[1] == :id
                 objTyp = srcTyp.args[2]
-                retTyp = if is_managed_wrapper(Base.eval(__module__, objTyp))
+                retTyp = if is_managed_wrapper(resolve_type(__module__, objTyp))
                     :(Union{Nothing, $objTyp})
                 else
                     srcTyp
@@ -752,11 +781,15 @@ macro objcproperties(typ, ex)
                 retTyp = srcTyp
             end
 
+            avail_check = if is_available(availability)
+                nothing
+            else
+                :(throw($UnavailableError(Symbol($(esc(typ)), ".", field), $availability)))
+            end
+
             getproperty_ex = objcm(__module__, :([object::id{$(esc(typ))} $getterproperty]::$retTyp))
             getproperty_ex = quote
-                @static if !ObjectiveC.is_available($availability)
-                    throw($UnavailableError(Symbol($(esc(typ)), ".", field), $availability))
-                end
+                $avail_check
                 value = $(Expr(:var"hygienic-scope", getproperty_ex, @__MODULE__, __source__))
             end
 
@@ -787,9 +820,10 @@ macro objcproperties(typ, ex)
             read_properties[property] = getproperty_ex
 
             if haskey(kwargs, :setter)
-                setproperty_ex = quote
-                    @objc [object::id{$(esc(typ))} $(kwargs[:setter]):value::$(esc(srcTyp))]::Nothing
-                end
+                setproperty_ex = objcm(__module__,
+                    :([object::id{$(esc(typ))} $(kwargs[:setter]):value::$(esc(srcTyp))]::Nothing))
+                setproperty_ex = Expr(:var"hygienic-scope", setproperty_ex,
+                                      @__MODULE__, __source__)
 
                 haskey(write_properties, property) && propertyerror("duplicate property $property")
                 write_properties[property] = setproperty_ex
