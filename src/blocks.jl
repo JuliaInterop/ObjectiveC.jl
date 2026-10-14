@@ -122,6 +122,9 @@ Objective-C method that does not return until its callbacks have run. In that
 situation, yielding deadlocks: the callback waits for the scheduler while the
 scheduler is held on the blocked thread. Use [`@objcasyncblock`](@ref) for such
 fire-and-forget callbacks where no synchronous result is required.
+The same holds when the block is invoked from within an `@objc` call made by Julia
+code: that call's autorelease pool is still active, and yielding could let another
+task pop it out of order.
 
 Also see: [`@cfunction`](@ref), [`@objcasyncblock`](@ref)
 """

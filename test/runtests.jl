@@ -588,33 +588,73 @@ end
 
 @testset "foundation" begin
 
-@testset "NSAutoReleasePool" begin
-    # a function that creates an `autorelease`d object (by calling `arrayWithObjects`)
-    function trigger_autorelease()
-        str1 = NSString("Hello")
-        str2 = NSString("World")
-        arr1 = [str1, str2]
-        NSArray([str1, str2])
-    end
-
-    # low-level API
-    let pool=NSAutoreleasePool()
-        trigger_autorelease()
-        drain(pool)
-    end
-
-    # high-level API
-    @autoreleasepool begin
-        trigger_autorelease()
-    end
-    @autoreleasepool function foo()
-        trigger_autorelease()
-    end
-    foo()
+# weak references let us observe deallocation without keeping objects alive
+function weak_ref(obj)
+    slot = Ptr{id{Object}}(Libc.malloc(sizeof(Ptr{Cvoid})))
+    ccall(:objc_initWeak, id{Object}, (Ptr{id{Object}}, id{Object}), slot, obj)
+    return slot
+end
+function is_deallocated(slot)
+    obj = ccall(:objc_loadWeakRetained, id{Object}, (Ptr{id{Object}},), slot)
+    obj == nil && return true
+    ccall(:objc_release, Cvoid, (id{Object},), obj)
+    return false
+end
+function free_weak_ref(slot)
+    ccall(:objc_destroyWeak, Cvoid, (Ptr{id{Object}},), slot)
+    Libc.free(slot)
 end
 
-# run the remainder of the tests in an autorelease pool to avoid leaking objects
-@autoreleasepool begin
+@testset "autorelease pools" begin
+    # calls drain their own pool, so autoreleased results are only kept alive by Julia
+    arr = NSArray([NSString("Hello"), NSString("World")])
+    slot = weak_ref(arr)
+    release(arr)
+    @test is_deallocated(slot)
+    free_weak_ref(slot)
+
+    # raw +0 results are left to the enclosing pool
+    str = "a string that is too long for a tagged pointer"
+    slot = @unsafe_autoreleasepool begin
+        ptr = @objc [NSString stringWithUTF8String:str::Ptr{UInt8}]::id{NSString}
+        slot = weak_ref(ptr)
+        @test !is_deallocated(slot)
+        slot
+    end
+    @test is_deallocated(slot)
+    free_weak_ref(slot)
+
+    obj = @objc [NSObject new]::TestManagedNSObject
+    slot = weak_ref(obj)
+    @unsafe_autoreleasepool begin
+        retain(obj)
+        autorelease(obj)
+        release(obj)
+        @test !is_deallocated(slot)
+    end
+    @test is_deallocated(slot)
+    free_weak_ref(slot)
+end
+
+@testset "Out" begin
+    err = Out{NSError}()
+    @test err[] === nothing
+    str = @objc [NSString stringWithContentsOfFile:"/nonexistent"::id{NSString}
+                                          encoding:4::NSUInteger
+                                             error:err::Out{NSError}]::Union{Nothing,NSString}
+    @test str === nothing
+    @test err[] isa NSError
+    @test err[].code == 260 # NSFileReadNoSuchFileError
+    @test contains(String(err[].domain), "Cocoa")
+
+    @test_throws ArgumentError Out{TestUnmanagedNSObject}()
+end
+
+@testset "unavailable return types" begin
+    @test_throws UnavailableError @objc [NSObject new]::TestWrapperNoIntro1
+    @test_throws UnavailableError Out{TestWrapperNoIntro1}()
+end
+
 
 @testset "NSString" begin
     str = NSString()
@@ -654,6 +694,15 @@ end
     @test reinterpret(NSString, arr2[1]) == "Hello"
     @test reinterpret(NSString, arr2[2]) == "World"
     @test Vector{NSString}(arr2) == arr1
+
+    # converted elements are owned, so they outlive the array
+    obj = @objc [NSObject new]::TestManagedNSObject
+    arr3 = NSArray([obj])
+    count = obj.retainCount
+    elems = Vector{TestManagedNSObject}(arr3)
+    @test elems[1].retainCount == count + 1
+    release(elems[1])
+    @test obj.retainCount == count
 
     @test_throws MethodError NSArray([NSUInteger(42)])
 end
@@ -774,7 +823,6 @@ end
     @test info.operatingSystemVersion isa NSOperatingSystemVersion
 end
 
-end
 
 end
 

@@ -99,7 +99,7 @@ Each wrapper is either managed or not. You pick per class with the `managed` key
 The return type you write on an `@objc` call decides how the result comes back:
 
 ```julia
-@objc [obj someMethod]::id{Foo}              # raw pointer, you own the result
+@objc [obj someMethod]::id{Foo}              # raw pointer
 @objc [obj someMethod]::Foo                  # managed wrapper
 @objc [obj someMethod]::Union{Nothing,Foo}   # managed wrapper, or nothing on nil
 ```
@@ -142,17 +142,57 @@ call repeatedly and safe if the finalizer later runs.
 It's possible to opt out of reference counting entirely by using `managed=false` on the
 wrapper. This is unsafe, and only makes sense in a handful of cases:
 
-* value-like objects such as strings, numbers, collections, and URLs;
-* control objects that run their own lifetime, like autorelease pools, blocks, and dispatch
-  objects;
-* objects something else already keeps alive: singletons, pooled objects, or resources whose
-  release is coordinated elsewhere.
+* control objects that run their own lifetime, like blocks and dispatch objects;
+* objects something else already keeps alive: singletons, objects owned by another object
+  you hold on to, or resources whose release is coordinated elsewhere.
+
+Don't count on an autorelease pool to keep an unmanaged object alive: as explained below,
+every `@objc` call drains its own pool before returning.
 
 Beware that this also opts out of the idempotency of `release`. If you call `release` on an
 unmanaged wrapper, it sends the raw `release` message to the object, which may crash if used
 incorrectly. It is thus advised not to opt out of automatic memory management when the
 lifetime of an object is non-trivial.
 
+
+### Autorelease pools
+
+Methods outside of the owned families typically return their result *autoreleased*: the
+callee adds it to the current thread's autorelease pool, which keeps it alive until the pool
+is drained. In Objective-C code, these pools are lexically scoped (`@autoreleasepool { ... }`)
+and drained on exit. That doesn't map onto Julia: pools are a per-thread stack, while Julia
+tasks can switch at any blocking operation, interleaving their pools or migrating to another
+thread before popping them. Without any pool, autoreleased objects leak.
+
+Instead, every `@objc` call runs in its own autorelease pool, which is drained after taking
+ownership of the result. The wrapper's reference keeps the object alive, and everything else
+the call autoreleased is released immediately. As a call doesn't yield to other tasks, this is
+safe regardless of what they do, and means you don't have to manage pools when using `@objc`
+with managed wrappers.
+
+The exception are calls returning a raw pointer at +0, e.g. `::id{T}` from a method outside
+the owned families, or a `::Ptr{T}` into an object's storage like `NSString`'s `UTF8String`.
+Such pointers are typically only valid until the current pool drains, so these calls are not
+pooled. Use them within `@unsafe_autoreleasepool`, and copy or `retain` what you need before
+it ends:
+
+```julia
+str = @unsafe_autoreleasepool unsafe_string(@objc [obj UTF8String]::Ptr{Cchar})
+```
+
+The code within `@unsafe_autoreleasepool` must not yield to the scheduler.
+
+Object out-parameters, like the `NSError **` arguments used to report errors, also return
+autoreleased objects. Pass an `Out{T}` to take ownership of them before the call's pool is
+drained:
+
+```julia
+err = Out{NSError}()
+str = @objc [NSString stringWithContentsOfFile:path::id{NSString}
+                                      encoding:4::NSUInteger
+                                         error:err::Out{NSError}]::Union{Nothing,NSString}
+str === nothing && throw(err[])
+```
 
 ## Properties
 
@@ -221,7 +261,9 @@ thread is adopted into the runtime when it enters Julia, so the block may be inv
 thread; before Julia 1.9 it could only be called from Julia-managed threads, or else the
 application would crash. Even with adoption, the callable still runs synchronously on the
 invoking thread, so it must not task-switch (yield, wait, do I/O) when another thread may be
-blocked waiting for the block to return — doing so can deadlock.
+blocked waiting for the block to return — doing so can deadlock. The same holds when the block
+is invoked from within an `@objc` call made by Julia code, as that call's autorelease pool is
+still active.
 
 For fire-and-forget callbacks where no synchronous result is required, use the
 `@objcasyncblock` macro instead. Rather than running Julia code on the invoking thread, it
