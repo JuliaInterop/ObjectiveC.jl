@@ -19,7 +19,7 @@ function Foundation.retain(obj::dispatch_object)
 end
 
 function Foundation.unsafe_release(obj::dispatch_object)
-    ccall(:dispatch_release, Cvoid, (dispatch_object_t,), obj)
+    @unsafe_autoreleasepool ccall(:dispatch_release, Cvoid, (dispatch_object_t,), obj)
 end
 
 function activate(obj::dispatch_object)

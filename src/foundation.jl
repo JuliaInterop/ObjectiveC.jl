@@ -25,7 +25,7 @@ ObjectiveC.@public checked_release, unsafe_release, adopt
 @objcwrapper NSObject <: Object
 
 # forward declaration
-@objcwrapper managed = false NSString <: NSObject
+@objcwrapper comparison = false NSString <: NSObject
 
 @objcproperties NSObject begin
     @autoproperty hash::NSUInteger
@@ -48,7 +48,8 @@ end
 
 Send a raw Objective-C `release` message. This is the primitive release
 operation; package authors may extend it for wrapper families with nonstandard
-release primitives, such as dispatch objects.
+release primitives, such as dispatch objects. Deallocation may autorelease objects, so
+such extensions should release within an [`@unsafe_autoreleasepool`](@ref).
 """
 unsafe_release(obj::Object) =
     @objc [obj::id{Object} release]::Cvoid
@@ -82,11 +83,12 @@ release(obj::Object) =
 """
     autorelease(obj)
 
-Manually send `autorelease` to an Objective-C object. This is for unmanaged
-wrappers and raw manual-ownership code.
+Manually autorelease an Objective-C object. This is for unmanaged wrappers and raw
+manual-ownership code, and only makes sense within an [`@unsafe_autoreleasepool`](@ref):
+`@objc` calls run in their own pools, so they cannot be used to autorelease objects.
 """
 autorelease(obj::Object) =
-    @objc [obj::id{Object} autorelease]::Cvoid
+    ccall(:objc_autorelease, id{Object}, (id{Object},), obj)
 
 """
     retain(obj)
@@ -96,7 +98,7 @@ Prefer `retain(T, ptr)` for borrowed pointers that should become managed
 wrappers.
 """
 retain(obj::Object) =
-    @objc [obj::id{Object} retain]::Cvoid
+    ccall(:objc_retain, id{Object}, (id{Object},), obj)
 
 is_kind_of(obj::NSObjectLike, class::Class) =
     @objc [obj::id{NSObject} isKindOfClass:class::Class]::Bool
@@ -143,6 +145,38 @@ function retain(::Type{T}, ptr::id) where {T<:Object}
     return attach_managed_finalizer(obj)
 end
 
+export @unsafe_autoreleasepool
+
+"""
+    @unsafe_autoreleasepool expr
+
+Evaluate `expr` within an Objective-C autorelease pool, releasing the objects it
+autoreleased when it finishes.
+
+This is not needed for `@objc` calls returning objects or values, as every such call
+already runs in its own pool and takes ownership of what it returns. Use it for code that
+works with raw pointers whose lifetime depends on an autorelease pool, e.g., the `+0`
+`::id{T}` or `::Ptr{T}` results of `@objc` calls, until it has copied or retained what
+it needs.
+
+!!! warning
+
+    `expr` must not yield to the scheduler. Autorelease pools are a per-thread stack,
+    so a task switch could let another task push or pop a pool in between, which aborts
+    the process or releases objects that are still in use.
+"""
+macro unsafe_autoreleasepool(ex)
+    quote
+        pool = ccall(:objc_autoreleasePoolPush, Ptr{Cvoid}, ())
+        try
+            $(esc(ex))
+        finally
+            ccall(:objc_autoreleasePoolPop, Cvoid, (Ptr{Cvoid},), pool)
+        end
+    end
+end
+
+
 # Default equality for ObjC objects via `isEqual:`. Specific classes can
 # override this for a faster path (NSString, NSURL, etc. already do).
 Base.:(==)(obj1::NSObjectLike, obj2::NSObjectLike) =
@@ -165,7 +199,7 @@ Base.cconvert(::Type{NSRange}, r::UnitRange{<:Integer}) = NSRange(first(r), leng
 
 export NSValue
 
-@objcwrapper managed = false NSValue <: NSObject
+@objcwrapper comparison = false NSValue <: NSObject
 
 Base.:(==)(v1::NSValue, v2::NSValue) =
     @objc [v1::id{NSValue} isEqualToValue:v2::id{NSValue}]::Bool
@@ -177,9 +211,9 @@ Base.:(==)(v1::NSValue, v2::NSValue) =
     # ...
 end
 
-NSValue(x::Ptr) = NSValue(@objc [NSValue valueWithPointer:x::Ptr{Cvoid}]::id{NSValue})
+NSValue(x::Ptr) = @objc [NSValue valueWithPointer:x::Ptr{Cvoid}]::NSValue
 NSValue(x::Union{NSRange,UnitRange}) =
-    NSValue(@objc [NSValue valueWithRange:x::NSRange]::id{NSValue})
+    @objc [NSValue valueWithRange:x::NSRange]::NSValue
 # ...
 
 
@@ -235,7 +269,7 @@ end
 
 export NSNumber
 
-@objcwrapper managed = false NSNumber <: NSObject
+@objcwrapper comparison = false NSNumber <: NSObject
 
 @objcproperties NSNumber begin
     @autoproperty boolValue::Bool
@@ -278,7 +312,7 @@ let
     for T in unique_number_types
         i = findfirst(x->x[1] == T, NSNumberTypes)
         method = NSNumberTypes[i][2]
-        @eval NSNumber(x::$T) = NSNumber(@objc [NSNumber $method:x::$T]::id{NSNumber})
+        @eval NSNumber(x::$T) = @objc [NSNumber $method:x::$T]::NSNumber
         @eval Base.convert(::Type{NSNumber}, x::$T) = NSNumber(x)
     end
 end
@@ -286,7 +320,7 @@ end
 
 export NSDecimalNumber, NaNDecimalNumber
 
-@objcwrapper managed = false NSDecimalNumber <: NSNumber
+@objcwrapper comparison = false NSDecimalNumber <: NSNumber
 @objcproperties NSDecimalNumber begin
     #@autoproperty defaultBehavior::NSDecimalNumberBehaviors
     @autoproperty decimalValue::NSDecimal
@@ -295,13 +329,13 @@ end
 
 # constructors
 NSDecimalNumber(dec::NSDecimal) =
-    NSDecimalNumber(@objc [NSDecimalNumber decimalNumberWithDecimal:dec::NSDecimal]::id{NSDecimalNumber})
+    @objc [NSDecimalNumber decimalNumberWithDecimal:dec::NSDecimal]::NSDecimalNumber
 NSDecimalNumber(str::Union{String,NSString}) =
-    NSDecimalNumber(@objc [NSDecimalNumber decimalNumberWithString:str::id{NSString}]::id{NSDecimalNumber})
+    @objc [NSDecimalNumber decimalNumberWithString:str::id{NSString}]::NSDecimalNumber
 NSDecimalNumber(; mantissa, exponent, negative) =
-    NSDecimalNumber(@objc [NSDecimalNumber decimalNumberWithMantissa:mantissa::Culonglong
-                                                            exponent:exponent::Cshort
-                                                          isNegative:negative::Bool]::id{NSDecimalNumber})
+    @objc [NSDecimalNumber decimalNumberWithMantissa:mantissa::Culonglong
+                                            exponent:exponent::Cshort
+                                          isNegative:negative::Bool]::NSDecimalNumber
 
 # conversions
 Core.Float64(dec::NSDecimal) = NSDecimalNumber(dec).doubleValue
@@ -309,15 +343,15 @@ NSDecimal(dec::NSDecimalNumber) = dec.decimalValue
 
 # fixed values
 Base.zero(::Type{NSDecimalNumber}) =
-    NSDecimalNumber(@objc [NSDecimalNumber zero]::id{NSDecimalNumber})
+    @objc [NSDecimalNumber zero]::NSDecimalNumber
 Base.one(::Type{NSDecimalNumber}) =
-    NSDecimalNumber(@objc [NSDecimalNumber one]::id{NSDecimalNumber})
+    @objc [NSDecimalNumber one]::NSDecimalNumber
 Base.typemin(::Type{NSDecimalNumber}) =
-    NSDecimalNumber(@objc [NSDecimalNumber minimumDecimalNumber]::id{NSDecimalNumber})
+    @objc [NSDecimalNumber minimumDecimalNumber]::NSDecimalNumber
 Base.typemax(::Type{NSDecimalNumber}) =
-    NSDecimalNumber(@objc [NSDecimalNumber maximumDecimalNumber]::id{NSDecimalNumber})
+    @objc [NSDecimalNumber maximumDecimalNumber]::NSDecimalNumber
 NaNDecimalNumber() =
-    NSDecimalNumber(@objc [NSDecimalNumber notANumber]::id{NSDecimalNumber})
+    @objc [NSDecimalNumber notANumber]::NSDecimalNumber
 
 # output
 Base.string(number::NSDecimalNumber) = number.description
@@ -360,11 +394,14 @@ Base.:(==)(s1::Union{String,NSString}, s2::Union{String,NSString}) =
 Base.:(==)(s1::NSString, s2::NSString) =
     @objc [s1::id{NSString} isEqualToString:s2::id{NSString}]::Bool
 
-NSString() = NSString(@objc [NSString string]::id{NSString})
+NSString() = @objc [NSString string]::NSString
 NSString(data::String) =
-    NSString(@objc [NSString stringWithUTF8String:data::Ptr{Cchar}]::id{NSString})
+    @objc [NSString stringWithUTF8String:data::Ptr{Cchar}]::NSString
 Base.length(s::NSString) = Int(s.length)
-Base.String(s::NSString) = unsafe_string(@objc [s::id{NSString} UTF8String]::Ptr{Cchar})
+# the UTF-8 buffer may only live as long as the string or the current autorelease pool
+Base.String(s::NSString) = GC.@preserve s begin
+    @unsafe_autoreleasepool unsafe_string(@objc [s::id{NSString} UTF8String]::Ptr{Cchar})
+end
 
 # avoid redundant quotes
 Base.string(s::NSString) = String(s)
@@ -382,24 +419,24 @@ Base.contains(s::AbstractString, t::NSString) =
 
 export NSArray
 
-@objcwrapper managed = false NSArray <: NSObject
+@objcwrapper comparison = false NSArray <: NSObject
 
 @objcproperties NSArray begin
     @autoproperty count::NSUInteger
 end
 
-NSArray() = NSArray(@objc [NSArray array]::id{NSArray})
+NSArray() = @objc [NSArray array]::NSArray
 
 function NSArray(elements::Vector{<:Object})
-    arr = @objc [NSArray arrayWithObjects:elements::id{Object}
-                                    count:length(elements)::NSUInteger]::id{NSArray}
-    return NSArray(arr)
+    return @objc [NSArray arrayWithObjects:elements::id{Object}
+                                     count:length(elements)::NSUInteger]::NSArray
 end
 
 Base.length(arr::NSArray) = Int(arr.count)
 function Base.getindex(arr::NSArray, i::Int)
     @boundscheck 1 <= i <= length(arr) || throw(BoundsError(arr, i))
-    @objc [arr::id{NSArray} objectAtIndex:(i-1)::NSUInteger]::id{Object}
+    # the element is kept alive by the array, not by the pool
+    @unsafe_autoreleasepool @objc [arr::id{NSArray} objectAtIndex:(i-1)::NSUInteger]::id{Object}
 end
 
 Base.iterate(arr::NSArray, i::Int=1) = i > length(arr) ? nothing : (arr[i], i+1)
@@ -407,16 +444,20 @@ Base.iterate(arr::NSArray, i::Int=1) = i > length(arr) ? nothing : (arr[i], i+1)
 Base.:(==)(a1::NSArray, a2::NSArray) =
     @objc [a1::id{NSArray} isEqualToArray:a2::id{NSArray}]::Bool
 
+# elements are only kept alive by their container, so take ownership of managed ones
+container_element(::Type{T}, ptr::id) where {T} =
+    ObjectiveC.is_managed_wrapper(T) ? retain(T, reinterpret(id{T}, ptr)) : reinterpret(T, ptr)
+
 # conversion to typed Julia array
 function Base.convert(::Type{Vector{T}}, arr::NSArray) where {T}
-    [reinterpret(T, arr[i]) for i in 1:length(arr)]
+    GC.@preserve arr [container_element(T, arr[i]) for i in 1:length(arr)]
 end
 Vector{T}(arr::NSArray) where {T} = convert(Vector{T}, arr)
 
 
 export NSDictionary
 
-@objcwrapper managed = false NSDictionary <: NSObject
+@objcwrapper comparison = false NSDictionary <: NSObject
 
 @objcproperties NSDictionary begin
     @autoproperty count::NSUInteger
@@ -424,14 +465,13 @@ export NSDictionary
     @autoproperty allValues::id{NSArray}
 end
 
-NSDictionary() = NSDictionary(@objc [NSDictionary dictionary]::id{NSDictionary})
+NSDictionary() = @objc [NSDictionary dictionary]::NSDictionary
 
 function NSDictionary(items::Dict{<:Object,<:Object})
     nskeys = NSArray(collect(keys(items)))
     nsvals = NSArray(collect(values(items)))
-    dict = @objc [NSDictionary dictionaryWithObjects:nsvals::id{NSArray}
-                               forKeys:nskeys::id{NSArray}]::id{NSDictionary}
-    return NSDictionary(dict)
+    return @objc [NSDictionary dictionaryWithObjects:nsvals::id{NSArray}
+                                      forKeys:nskeys::id{NSArray}]::NSDictionary
 end
 
 Base.length(dict::NSDictionary) = Int(dict.count)
@@ -441,15 +481,15 @@ Base.keys(dict::NSDictionary) = dict.allKeys
 Base.values(dict::NSDictionary) = dict.allValues
 
 function Base.getindex(dict::NSDictionary, key::Object)
-    ptr = @objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::id{Object}
+    # the value is kept alive by the dictionary, not by the pool
+    ptr = @unsafe_autoreleasepool @objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::id{Object}
     ptr == nil && throw(KeyError(key))
     return ptr
 end
 
 # conversion to typed Julia dictionary
 function Base.convert(::Type{Dict{K,V}}, dict::NSDictionary) where {K,V}
-    Dict{K,V}(zip(map(Base.Fix1(reinterpret, K), keys(dict)),
-                    map(Base.Fix1(reinterpret, V), values(dict))))
+    Dict{K,V}(zip(Vector{K}(keys(dict)), Vector{V}(values(dict))))
 end
 Dict{K,V}(dict::NSDictionary) where {K,V} = convert(Dict{K,V}, dict)
 
@@ -510,7 +550,7 @@ export NSHost, current_host, hostname
 end
 
 current_host() = @objc [NSHost currentHost]::NSHost
-hostname() = unsafe_string(current_host().localizedName.UTF8String)
+hostname() = String(current_host().localizedName)
 
 
 export NSBundle, load_framework
@@ -533,7 +573,7 @@ load_framework(name) = load(NSBundle("/System/Library/Frameworks/$name.framework
 
 export NSURL, NSFileURL
 
-@objcwrapper managed = false NSURL <: NSObject
+@objcwrapper comparison = false NSURL <: NSObject
 
 @objcproperties NSURL begin
     # Querying an NSURL
@@ -568,17 +608,21 @@ export NSURL, NSFileURL
 end
 
 function NSURL(str::Union{String,NSString})
-    NSURL(@objc [NSURL URLWithString:str::id{NSString}]::id{NSURL})
+    @objc [NSURL URLWithString:str::id{NSString}]::NSURL
 end
 
 function NSFileURL(path::Union{String,NSString})
-    NSURL(@objc [NSURL fileURLWithPath:path::id{NSString}]::id{NSURL})
+    @objc [NSURL fileURLWithPath:path::id{NSString}]::NSURL
 end
 
 function Base.:(==)(a::NSURL, b::NSURL)
     @objc [a::id{NSURL} isEqual:b::id{NSURL}]::Bool
 end
 
+
+# value objects compare by `isEqual:`, so hash accordingly
+Base.hash(obj::Union{NSStringLike,NSValueLike,NSNumberLike,NSArrayLike,NSDictionaryLike,NSURLLike},
+          h::UInt) = hash(obj.hash, h)
 
 export NSBlock
 
@@ -602,146 +646,6 @@ NSConcreteStackBlock()  = cglobal(:_NSConcreteStackBlock)
 
 function Base.copy(block::NSBlock)
     @objc [block::id{NSBlock} copy]::id{NSBlock}
-end
-
-
-export NSAutoreleasePool, @autoreleasepool, drain
-
-@objcwrapper managed = false NSAutoreleasePool <: NSObject
-
-"""
-    NSAutoreleasePool()
-
-Create a new autorelease pool. This is a low-level wrapper around the Objective-C
-`NSAutoreleasePool` class, and should be used with care. For example, it does not
-automatically get released, or drain the pool on finalization.
-
-For high-level usage, consider using the do-block syntax, or [`@autoreleasepool`](@ref)
-instead.
-"""
-function NSAutoreleasePool()
-    obj = NSAutoreleasePool(@objc [NSAutoreleasePool alloc]::id{NSAutoreleasePool})
-    # XXX: this init call itself requires an autoreleasepool to be active...
-    @objc [obj::id{NSAutoreleasePool} init]::id{NSAutoreleasePool}
-    # NOTE: we don't register a finalizer, as it's better to drain the pool,
-    #       and it's not allowed to both drain and release.
-    obj
-end
-
-drain(pool::NSAutoreleasePool) = @objc [pool::id{NSAutoreleasePool} drain]::Cvoid
-
-# high-level interface to wrap Julia code in an autorelease pool
-
-"""
-    NSAutoreleasePool() do
-      # ...
-    end
-
-High-level interface to wrap Julia code in an autorelease pool. This is equivalent to
-`@autoreleasepool` in Objective-C, and ensures that the pool is drained after the
-enclosed code block has finished.
-
-Note that due to technical limitations, this API prevents the current task from migrating
-to another thread. In addition, only one autorelease do-block can be active at a time.
-To disable these limitations, use the unsafe [`NSUnsafeAutoreleasePool`](@ref) instead.
-
-See also: [`@autoreleasepool`](@ref)
-"""
-function NSAutoreleasePool(f::Base.Callable)
-    # we cannot switch between multiple autorelease pools, so ensure only one is ever active.
-    # XXX: support multiple pools, as long as they run on separate threads?
-    Base.@lock NSAutoreleaseLock begin
-        # autorelease pools are thread-bound, so ensure we don't migrate to another thread
-        task = current_task()
-        sticky = task.sticky
-        task.sticky = true
-
-        pool = NSAutoreleasePool()
-        try
-            f()
-        finally
-            drain(pool)
-            #task.sticky = sticky
-            # XXX: we cannot safely re-enable thread migration, as the called code might have
-            #      disabled it too. instead, Julia should have a notion of "temporary pinning"
-        end
-    end
-end
-const NSAutoreleaseLock = ReentrantLock()
-
-function NSUnsafeAutoreleasePool(f::Base.Callable)
-    pool = NSAutoreleasePool()
-    try
-        f()
-    finally
-        drain(pool)
-    end
-end
-
-
-"""
-    @autoreleasepool [kwargs...] code...
-    @autoreleasepool [kwargs...] function ... end
-
-High-level interface to wrap Julia code in an autorelease pool. This macro can be used
-within a function, or as a function decorator. In both cases, the macro ensures that the
-contained code is wrapped in an autorelease pool, and that the pool is drained after the
-enclosed code block has finished.
-
-See also: [`NSAutoreleasePool`](@ref)
-"""
-macro autoreleasepool(ex...)
-    code = ex[end]
-    kwargs = ex[1:end-1]
-
-    # extract keyword arguments that are handled by this macro
-    unsafe = false
-    for kwarg in kwargs
-        if Meta.isexpr(kwarg, :(=))
-            key, value = kwarg.args
-            if key == :unsafe
-                isa(value, Bool) || throw(ArgumentError("Invalid value for keyword argument `unsafe`: got `$value`, expected literal boolean value"))
-                unsafe = value
-            else
-                error("Invalid keyword argument to @autoreleasepool: $kwarg")
-            end
-        else
-            throw(ArgumentError("Invalid keyword argument to @autoreleasepool: $kwarg"))
-        end
-    end
-    f = unsafe ? NSUnsafeAutoreleasePool : NSAutoreleasePool
-
-    if Meta.isexpr(code, :(=)) &&
-        (Meta.isexpr(code.args[1], :call) || Meta.isexpr(code.args[1], :where))
-        # function definition, short form
-        sig, body = code.args
-        @assert Meta.isexpr(body, :block)
-        managed_body = Expr(:block, __source__,
-            :($f() do
-                $body
-            end)
-        )
-        esc(Expr(:(=), sig, managed_body))
-    elseif Meta.isexpr(code, :function)
-        # function definition, long form
-        sig = code.args[1]
-        @assert Meta.isexpr(sig, :call) || Meta.isexpr(sig, :where)
-        body = code.args[2]
-        @assert Meta.isexpr(body, :block)
-        managed_body = Expr(:block, __source__,
-            :($f() do
-                $body
-            end)
-        )
-        esc(Expr(:function, sig, managed_body))
-    else
-        # code block
-        quote
-            $f() do
-                $(esc(code))
-            end
-        end
-    end
 end
 
 

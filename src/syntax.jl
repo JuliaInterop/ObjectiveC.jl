@@ -1,4 +1,4 @@
-export @objc, @objcwrapper, @objcproperties, @objcblock
+export @objc, @objcwrapper, @objcproperties, @objcblock, Out
 
 
 # `Object` is parameterized by its `Kind` (declared in primitives.jl). Each
@@ -17,8 +17,49 @@ objc_parent(::Type{<:Object}) = nothing
 # from mutability so the ownership contract has one source of truth.
 is_managed_wrapper(::Type) = false
 
+# wrappers for unavailable classes throw when constructed; `@objc` checks this before
+# pushing an autorelease pool, as wrapping the result happens while the pool is active.
+check_available(::Type) = nothing
+
 
 # Method Calling
+
+"""
+    Out{T}()
+
+An object out-parameter, such as an `NSError **` argument. Pass it to `@objc` as
+`name:out::Out{T}`; once the call returns, `out[]` is either `nothing` or the object the
+callee stored, retained as a managed `T`.
+
+The callee is expected to store an autoreleased (+0) object, as Cocoa methods do for
+`NSError **` arguments. `T` must be a managed wrapper type.
+"""
+mutable struct Out{T<:Object}
+    # the slot passed to Objective-C; must be the first field
+    ptr::id{T}
+    value::Union{Nothing,T}
+
+    function Out{T}() where {T<:Object}
+        is_managed_wrapper(T) ||
+            throw(ArgumentError("Out{$T} requires a managed wrapper type"))
+        check_available(T)
+        new{T}(id{T}(0), nothing)
+    end
+end
+
+Base.getindex(out::Out) = out.value
+
+Base.cconvert(::Type{Ptr{id{T}}}, out::Out{T}) where {T} = out
+Base.unsafe_convert(::Type{Ptr{id{T}}}, out::Out{T}) where {T} =
+    Ptr{id{T}}(pointer_from_objref(out))
+
+# called from within the send's autorelease pool, so must not throw
+function claim_out!(out::Out{T}) where {T}
+    out.value = out.ptr == nil ? nothing : Foundation.retain(T, out.ptr)
+    out.ptr = id{T}(0)
+    return
+end
+
 
 callerror(msg) = error("""ObjectiveC call: $msg
                           Use [obj method]::typ or [obj method :param::typ ...]::typ""")
@@ -146,34 +187,36 @@ function objc_ccall_rettyp(rettyp)
     return rettyp <: Object ? id{rettyp} : rettyp
 end
 
+# Wrap the raw result of a send. This runs while the send's autorelease pool is still active,
+# so it must not throw: a `nil` result for a non-nullable object type is returned as
+# `nothing` here, and rejected by `objc_check_return` once the pool has been popped.
 function objc_wrap_return(ret, rettyp, sel)
-    objtyp = nullable_object(rettyp)
+    objtyp = something(nullable_object(rettyp), rettyp)
+    objtyp <: Object || return ret
     family = method_family(sel)
-    if objtyp !== nothing
-        wrap = if is_managed_wrapper(objtyp)
-            if family === nothing
-                :($ObjectiveC.Foundation.retain($objtyp, $ret))
-            else
-                :($ObjectiveC.Foundation.adopt($objtyp, $ret))
-            end
-        else
-            family === nothing || error("ObjectiveC call: owned-family selector `$sel` cannot return unmanaged wrapper $objtyp; use `::id{$objtyp}` and release manually, or declare the wrapper with `managed=true`")
-            :($objtyp($ret))
-        end
-        return :($ret == $ObjectiveC.nil ? nothing : $wrap)
-    end
-
-    rettyp <: Object || return ret
-    if is_managed_wrapper(rettyp)
+    wrap = if is_managed_wrapper(objtyp)
         if family === nothing
-            return :($ObjectiveC.Foundation.retain($rettyp, $ret))
+            :($ObjectiveC.Foundation.retain($objtyp, $ret))
         else
-            return :($ObjectiveC.Foundation.adopt($rettyp, $ret))
+            :($ObjectiveC.Foundation.adopt($objtyp, $ret))
         end
     else
-        family === nothing || error("ObjectiveC call: owned-family selector `$sel` cannot return unmanaged wrapper $rettyp; use `::id{$rettyp}` and release manually, or declare the wrapper with `managed=true`")
-        return :($rettyp($ret))
+        family === nothing || error("ObjectiveC call: owned-family selector `$sel` cannot return unmanaged wrapper $objtyp; use `::id{$objtyp}` and release manually, or declare the wrapper with `managed=true`")
+        :($objtyp($ret))
     end
+    return :($ret == $ObjectiveC.nil ? nothing : $wrap)
+end
+
+function objc_check_return(ret, rettyp)
+    rettyp <: Object || return ret
+    return :($ret === nothing ? throw(UndefRefError()) : $ret)
+end
+
+# Sends returning a raw pointer at +0 are not pooled: the pointer is typically only valid
+# until the enclosing autorelease pool drains, so the caller has to provide that pool.
+function objc_pooled(rettyp, sel)
+    method_family(sel) === nothing || return true
+    return !(rettyp <: id || rettyp <: Ptr)
 end
 
 function objcm(mod, ex)
@@ -286,64 +329,70 @@ function render_c_arg(io, obj, typ)
     end
 end
 
-# ensure that the GC can run during a ccall on Julia 1.10/1.11. this is only
-# safe if callbacks into Julia transition back to GC-unsafe, which is the case
-# on Julia 1.10+.
+# `Out{T}` arguments are passed to Objective-C as a pointer to an object slot.
+function is_out_type(typ)
+    Meta.isexpr(typ, :curly) || return false
+    head = typ.args[1]
+    return head === :Out || head == :(ObjectiveC.Out) || head === GlobalRef(ObjectiveC, :Out)
+end
+objc_ccall_argtyp(typ) = is_out_type(typ) ?
+    :(Ptr{$ObjectiveC.id{$(esc(typ.args[2]))}}) : esc(typ)
+
+# Emit a message send as a self-contained operation, evaluating to the wrapped result.
 #
-# doing so is tricky, because no GC operations are allowed after the transition,
-# meaning we have to do our own argument conversion instead of relying on ccall.
-function make_gcsafe(ex)
-    # decode the ccall
-    if !Meta.isexpr(ex, :call) || ex.args[1] != :ccall
-        error("Can only make ccall expressions GC-safe")
-    end
-    target = ex.args[2]
-    rettyp = ex.args[3]
-    argtypes = ex.args[4].args
-    args = ex.args[5:end]
+# The send, and taking ownership of its result and `Out` arguments, happens in its own
+# autorelease pool. Objects the callee autoreleases are thus released when the call
+# returns, and the pool doesn't span a task switch, which could make pools pop out of order
+# (that is, unless the callee calls back into Julia code that yields, which `@objcblock`
+# callables are not allowed to do).
+# Argument conversion and checks happen before pushing the pool, and wrapping the result
+# cannot throw, so the pool is always popped without needing an exception handler.
+#
+# The send itself is GC-safe, so that the GC can run during long-running calls.
+function emit_send(receiver, receiver_typ, rettyp, sel, argtyps, argvals)
+    ccall_rettyp = objc_ccall_rettyp(rettyp)
+    msgsend_fn = ABI.use_stret(ccall_rettyp) ? :objc_msgSend_stret : :objc_msgSend
 
-    code = quote
-    end
+    vals = Any[receiver, :sel, map(esc, argvals)...]
+    typs = Any[receiver_typ, :(Ptr{Cvoid}), map(objc_ccall_argtyp, argtyps)...]
+    outs = [false, false, map(is_out_type, argtyps)...]
+    converted = [Symbol("converted_arg$i") for i in 1:length(vals)]
+    unsafe = [Symbol("unsafe_arg$i") for i in 1:length(vals)]
 
-    # assign argument values to variables
-    vars = [Symbol("arg$i") for i in 1:length(args)]
-    for (var, arg) in zip(vars, args)
-        push!(code.args, :($var = $arg))
-    end
-
-    # convert the arguments
-    converted = [Symbol("converted_arg$i") for i in 1:length(args)]
-    for (converted, argtyp, var) in zip(converted, argtypes, vars)
-        push!(code.args, :($converted = Base.unsafe_convert($argtyp, Base.cconvert($argtyp, $var))))
-    end
-
-    # emit a gcsafe ccall
-    append!(code.args, (quote
-        GC.@preserve $(vars...) begin
+    send = @static if VERSION >= v"1.12"
+        argpairs = Any[Expr(:(::), val, typ) for (val, typ) in zip(unsafe, typs)]
+        Expr(:macrocall, GlobalRef(Base, Symbol("@ccall")), LineNumberNode(0, :none),
+             Expr(:(=), :gc_safe, true),
+             Expr(:(::), Expr(:call, msgsend_fn, argpairs...), ccall_rettyp))
+    else
+        # Julia 1.10/1.11 lack `gc_safe`, so transition manually. That is only safe
+        # because callbacks into Julia transition back to GC-unsafe, and because no GC
+        # operations (like argument conversion) happen while in the GC-safe region.
+        quote
             gc_state = ccall(:jl_gc_safe_enter, Int8, ())
-            ret = ccall($target, $rettyp, ($(argtypes...),), $(converted...))
+            ret = ccall($(QuoteNode(msgsend_fn)), $ccall_rettyp, ($(typs...),), $(unsafe...))
             ccall(:jl_gc_safe_leave, Cvoid, (Int8,), gc_state)
             ret
         end
-    end).args)
+    end
 
-    return code
-end
+    pooled = objc_pooled(rettyp, sel)
+    body = quote
+        $((:($u = Base.unsafe_convert($t, $c)) for (u, t, c) in zip(unsafe, typs, converted))...)
+        $(pooled ? :(pool = ccall(:objc_autoreleasePoolPush, Ptr{Cvoid}, ())) : nothing)
+        raw_ret = $send
+        $((:($ObjectiveC.claim_out!($c)) for (c, out) in zip(converted, outs) if out)...)
+        wrapped_ret = $(objc_wrap_return(:raw_ret, rettyp, sel))
+        $(pooled ? :(ccall(:objc_autoreleasePoolPop, Cvoid, (Ptr{Cvoid},), pool)) : nothing)
+        wrapped_ret
+    end
 
-function emit_msgsend(receiver, receiver_typ, rettyp, argtyps, argvals)
-    msgsend_fn = ABI.use_stret(rettyp) ? :objc_msgSend_stret : :objc_msgSend
-    vals = Any[receiver, :sel, map(esc, argvals)...]
-    typs = Any[receiver_typ, :(Ptr{Cvoid}), map(esc, argtyps)...]
-
-    @static if VERSION >= v"1.12"
-        argpairs = Any[Expr(:(::), val, typ) for (val, typ) in zip(vals, typs)]
-        return Expr(:macrocall, GlobalRef(Base, Symbol("@ccall")),
-                    LineNumberNode(0, :none),
-                    Expr(:(=), :gc_safe, true),
-                    Expr(:(::), Expr(:call, msgsend_fn, argpairs...), rettyp))
-    else
-        return make_gcsafe(Expr(:call, :ccall, QuoteNode(msgsend_fn), rettyp,
-                                Expr(:tuple, typs...), vals...))
+    objtyp = something(nullable_object(rettyp), rettyp)
+    quote
+        $(objtyp <: Object ? :($ObjectiveC.check_available($objtyp)) : nothing)
+        $((:($c = Base.cconvert($t, $v)) for (c, t, v) in zip(converted, typs, vals))...)
+        ret = GC.@preserve $(converted...) $body
+        $(objc_check_return(:ret, rettyp))
     end
 end
 
@@ -352,8 +401,7 @@ end
 # mark the generated expression inline while keeping the traced send emitted once.
 function class_message(class_name, msg, rettyp, argtyps, argvals)
     # We follow Julia's ABI implementation, so ccall/@ccall will handle the sret box.
-    send = emit_msgsend(:class, :(Ptr{Cvoid}), objc_ccall_rettyp(rettyp), argtyps, argvals)
-    wrap = objc_wrap_return(:raw_ret, rettyp, msg)
+    send = emit_send(:class, :(Ptr{Cvoid}), rettyp, msg, argtyps, argvals)
 
     quote
         $(Expr(:meta, :inline))
@@ -371,8 +419,7 @@ function class_message(class_name, msg, rettyp, argtyps, argvals)
         # Runtime tracing hook (see tracing.jl): one global read + predicted branch when off.
         obj_sub = tracing_subscriber[]
         obj_t0 = obj_sub == C_NULL ? UInt64(0) : tracing_clock()
-        raw_ret = $send
-        ret = $wrap
+        ret = $send
         obj_sub == C_NULL || tracing_dispatch(obj_sub, $(QuoteNode(Symbol(class_name))),
                                               $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
         @static if $tracing
@@ -389,8 +436,7 @@ end
 function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_label=:id)
     # TODO: use the instance type `typ` to verify when in validation mode?
     # We follow Julia's ABI implementation, so ccall/@ccall will handle the sret box.
-    send = emit_msgsend(instance, :(id{Object}), objc_ccall_rettyp(rettyp), argtyps, argvals)
-    wrap = objc_wrap_return(:raw_ret, rettyp, msg)
+    send = emit_send(instance, :(id{Object}), rettyp, msg, argtyps, argvals)
 
     quote
         $(Expr(:meta, :inline))
@@ -409,8 +455,7 @@ function instance_message(instance, typ, msg, rettyp, argtyps, argvals, class_la
         # Runtime tracing hook (see tracing.jl): one global read + predicted branch when off.
         obj_sub = tracing_subscriber[]
         obj_t0 = obj_sub == C_NULL ? UInt64(0) : tracing_clock()
-        raw_ret = $send
-        ret = $wrap
+        ret = $send
         obj_sub == C_NULL || tracing_dispatch(obj_sub, $(QuoteNode(class_label)),
                                               $(QuoteNode(Symbol(msg))), obj_t0, tracing_clock())
         @static if $tracing
@@ -482,10 +527,12 @@ Keyword arguments:
     `::Union{Nothing,T}` is supported for both managed and unmanaged wrappers:
     non-`nil` managed results follow the same `adopt`/`retain` behavior as
     `::T`, while non-`nil` unmanaged results are borrowed wrappers.
-    Use `managed=false` only for curated exceptions: Swift-style value bridges
-    such as strings, numbers, containers, and URLs; control/special objects
-    such as autorelease pools, blocks, or dispatch objects; or resources with
-    a bespoke singleton, pooled, or externally synchronized lifetime.
+    Since every `@objc` call drains its own autorelease pool before returning,
+    nothing keeps a borrowed object alive except its other owners. Use
+    `managed=false` only for objects whose lifetime is guaranteed otherwise:
+    process-lifetime singletons, objects owned by another object that is kept
+    alive, objects released manually, or special objects such as blocks and
+    dispatch objects.
   * `availability`: a `PlatformAvailability` describing the OS/version
     availability of the class.
   * `comparison`: if `true` (default `managed`), define `==` and `hash` for the
@@ -588,6 +635,7 @@ macro objcwrapper(ex...)
         # record the immediate ObjC parent for the property-dispatch chain.
         $ObjectiveC.objc_parent(::Type{$name}) = $super
         $ObjectiveC.is_managed_wrapper(::Type{$name}) = $managed
+        $ObjectiveC.check_available(::Type{$name}) = $avail_check
     end
 
     # add optional methods
@@ -771,7 +819,11 @@ macro objcproperties(typ, ex)
             end
             if Meta.isexpr(srcTyp, :curly) && srcTyp.args[1] == :id
                 objTyp = srcTyp.args[2]
-                retTyp = if is_managed_wrapper(resolve_type(__module__, objTyp))
+                # object properties of a concrete wrapper type return that wrapper, which
+                # for managed wrappers retains the object before the call's pool drains.
+                # other object properties return a raw pointer, wrapped below.
+                resolvedTyp = resolve_type(__module__, objTyp)
+                retTyp = if isconcretetype(resolvedTyp) && resolvedTyp <: Object
                     :(Union{Nothing, $objTyp})
                 else
                     srcTyp
@@ -793,8 +845,7 @@ macro objcproperties(typ, ex)
                 value = $(Expr(:var"hygienic-scope", getproperty_ex, @__MODULE__, __source__))
             end
 
-            # if we're dealing with a typed unmanaged object pointer, do a nil check and create
-            # a borrowed wrapper. Managed object properties use the nullable ARC return above.
+            # if we're dealing with a raw object pointer, do a nil check and wrap it.
             if objTyp !== nothing && retTyp === srcTyp
                 append!(getproperty_ex.args, (quote
                     value == nil && return nothing
