@@ -196,13 +196,15 @@ Signposts emitted on a regular category are always enabled and stored in the sys
 For signposts on hot code paths, use [`CATEGORY_DYNAMIC_TRACING`](@ref) as the category,
 which only enables them while Instruments records them.
 
-Construction of these objects is very cheap, and as such it is recommended to create
-a new logger for each subsystem and category combination.
+Create a logger for each subsystem and category combination. Construction is cheap
+(tens of nanoseconds, as the system caches loggers), but on hot code paths that is more
+than a disabled signpost costs, so store the logger in a global or a `Ref` there.
 
 For logging messages, use the `log` object as a function, passing the message as a
 string. The `type` keyword argument can be used to specify the log type, which can
 be one of `LOG_TYPE_DEFAULT`, `LOG_TYPE_INFO`, `LOG_TYPE_DEBUG`, `LOG_TYPE_ERROR`,
-or `LOG_TYPE_FAULT`. By default, the log type is `LOG_TYPE_DEFAULT`.
+or `LOG_TYPE_FAULT`. By default, the log type is `LOG_TYPE_DEFAULT`. Messages longer
+than about 1 KiB are truncated by the system.
 """
 function OSLog(subsystem::String, category::String; enabled=true)
     if enabled
@@ -405,7 +407,7 @@ The following keyword arguments are supported:
 
     - `log`: the `OSLog` object to use for logging. By default, the default logger is used.
     - `start`: the message to log at the start of the interval. By default, "start".
-    - `stop`: the message to log at the end of the interval. By default, "end", or "error"
+    - `stop`: the message to log at the end of the interval. By default, "stop", or "error"
       if an error occured during evaluation of `ex`. May refer to variables defined in `ex`.
 """
 macro signpost_interval(ex...)
