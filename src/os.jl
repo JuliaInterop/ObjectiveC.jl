@@ -223,7 +223,7 @@ OSLog(; enabled::Bool=true) = enabled ? OS_LOG_DEFAULT() : OS_LOG_DISABLED()
 end
 
 is_log_enabled(log::OSLog, type::os_log_type_t) =
-    Bool(@ccall os_log_type_enabled(log::os_log_t, type::os_log_type_t)::Cint)
+    @ccall os_log_type_enabled(log::os_log_t, type::os_log_type_t)::Bool
 
 function (log::OSLog)(msg::String; type::os_log_type_t=LOG_TYPE_DEFAULT)
     if is_log_enabled(log, type)
@@ -324,7 +324,7 @@ end
 
 Base.convert(::Type{os_signpost_id_t}, signpost::OSSignpost) = signpost.id
 
-is_signpost_enabled(log::OSLog) = Bool(@ccall os_signpost_enabled(log::os_log_t)::Cint)
+is_signpost_enabled(log::OSLog) = @ccall os_signpost_enabled(log::os_log_t)::Bool
 
 @cenum os_signpost_type_t::UInt8 begin
     SIGNPOST_EVENT          = 0
