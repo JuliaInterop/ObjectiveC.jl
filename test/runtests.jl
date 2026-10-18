@@ -1053,7 +1053,23 @@ end
     @test success(pipeline(cmd; stdout, stderr))
 end
 
+@testset "instruments package" begin
+    @test_throws ArgumentError OS.instruments_package(String[])
+    @test_throws ArgumentError OS.instruments_package(["a\"b"])
+    @test_throws ArgumentError OS.instruments_package(["a\rb"])
+    if success(pipeline(`xcrun --find instrumentbuilder`; stdout=devnull, stderr=devnull))
+        mktempdir() do dir
+            path, instrument = OS.instruments_package(["org.juliainterop.objectivec", "a&b"]; dir)
+            @test isdir(path)
+            @test instrument isa String
+        end
+    end
+end
+
 @testset "signpost" begin
+
+# dynamic tracing categories are disabled unless Instruments asks for them
+@test !OS.is_signpost_enabled(OSLog("org.juliainterop.objectivec", OS.CATEGORY_DYNAMIC_TRACING))
 
 # names that are not literals
 let name = "dynamic"

@@ -168,12 +168,33 @@ OS_LOG_DISABLED() = OSLog(cglobal(:_os_log_disabled, os_log_t))
 OS_LOG_DEFAULT() = OSLog(cglobal(:_os_log_default, os_log_t))
 
 """
+Category for signposts that should be shown in the "Points of Interest" instrument.
+"""
+const CATEGORY_POINTS_OF_INTEREST = "PointsOfInterest"
+
+"""
+Category for signposts that are disabled, and thus have virtually no overhead, unless a
+tool requests them. Instruments only does so for subsystems an instrument asks for; see
+[`instruments_package`](@ref).
+"""
+const CATEGORY_DYNAMIC_TRACING = "DynamicTracing"
+
+"""
+Like [`CATEGORY_DYNAMIC_TRACING`](@ref), but also records backtraces of each signpost.
+"""
+const CATEGORY_DYNAMIC_STACK_TRACING = "DynamicStackTracing"
+
+"""
     OSLog([subsystem::String], [category::String]; enabled=true)
 
 Create a new `OSLog` object, which can be used to log messages to the system log.
 Passing no options creates a default logger, but it is recommended to specify the
 subsystem and category of the logger. By setting `enabled` to `false`, the logger
 can be disabled, which is useful for conditional logging.
+
+Signposts emitted on a regular category are always enabled and stored in the system log.
+For signposts on hot code paths, use [`CATEGORY_DYNAMIC_TRACING`](@ref) as the category,
+which only enables them while Instruments records them.
 
 Construction of these objects is very cheap, and as such it is recommended to create
 a new logger for each subsystem and category combination.
@@ -477,6 +498,162 @@ macro signpost_event(ex...)
                                        $(signpost_strings(name)), $(esc(name)), $(esc(msg)))
         end
     end
+end
+
+
+## Instruments integration
+
+xml_escape(str::String) =
+    replace(str, '&' => "&amp;", '<' => "&lt;", '>' => "&gt;", '"' => "&quot;", '\'' => "&apos;")
+
+"""
+    instruments_package(subsystems::Vector{String}; dir=mktempdir()) -> (path, instrument)
+
+Build an Instruments package with an instrument that enables signposts in the
+[`CATEGORY_DYNAMIC_TRACING`](@ref) and [`CATEGORY_DYNAMIC_STACK_TRACING`](@ref)
+categories of the given subsystems, and records the signposts of those subsystems. The
+instrument plots intervals and events on a timeline, lists them, and summarizes the
+intervals by subsystem and name.
+
+Returns the path to the package, and the name of the instrument, for use with
+`xctrace record --package \$path --instrument \$instrument`. Instruments.app can load the
+package by opening it.
+
+Requires Xcode's `instrumentbuilder`.
+"""
+function instruments_package(subsystems::Vector{String}; dir::String=mktempdir())
+    isempty(subsystems) && throw(ArgumentError("At least one subsystem is required"))
+    any(s -> occursin(r"[\"\\\p{Cc}]", s), subsystems) &&
+        throw(ArgumentError("Subsystems cannot contain quotes, backslashes or control \
+                             characters"))
+    id = "org.julialang.signposts"
+    instrument = "Julia Signposts"
+
+    subsystem_array = join(("<string>$(xml_escape(s))</string>" for s in subsystems))
+    # schemas do not inherit the subsystem filter of the table that enables them
+    subsystem_filter = xml_escape("?subsystem&" * join(("\"$s\"" for s in subsystems), '|'))
+    columns = """
+                <column><mnemonic>process</mnemonic><title>Process</title><type>process</type><expression>?process</expression></column>
+                <column><mnemonic>name</mnemonic><title>Name</title><type>string</type><expression>?name</expression></column>
+                <column><mnemonic>subsystem</mnemonic><title>Subsystem</title><type>string</type><expression>?subsystem</expression></column>
+                <column><mnemonic>category</mnemonic><title>Category</title><type>string</type><expression>?category</expression></column>
+                <column><mnemonic>message</mnemonic><title>Message</title><type>os-log-metadata</type><expression>?message</expression></column>
+        """
+    pkg = """
+        <?xml version="1.0" encoding="UTF-8" ?>
+        <package>
+            <id>$id</id>
+            <title>Julia</title>
+            <owner>
+                <name>JuliaLang</name>
+            </owner>
+            <import-schema>os-signpost</import-schema>
+
+            <os-signpost-interval-schema>
+                <id>julia-signpost-interval</id>
+                <title>Julia Signpost Interval</title>
+                <subsystem>$subsystem_filter</subsystem>
+                <category>?category</category>
+                <name>?name</name>
+                <start-pattern><raw-message>?message</raw-message><process>?process</process></start-pattern>
+        $columns
+            </os-signpost-interval-schema>
+
+            <os-signpost-point-schema>
+                <id>julia-signpost-event</id>
+                <title>Julia Signpost Event</title>
+                <subsystem>$subsystem_filter</subsystem>
+                <category>?category</category>
+                <name>?name</name>
+                <pattern><raw-message>?message</raw-message><process>?process</process></pattern>
+        $columns
+            </os-signpost-point-schema>
+
+            <instrument>
+                <id>$id.instrument</id>
+                <title>$instrument</title>
+                <category>Behavior</category>
+                <purpose>Records the signposts of Julia packages, including dynamic tracing ones.</purpose>
+                <icon>Generic</icon>
+
+                <create-table>
+                    <id>signposts</id>
+                    <schema-ref>os-signpost</schema-ref>
+                    <attribute>
+                        <name>dynamic-tracing-enabled-subsystems</name>
+                        <array>$subsystem_array</array>
+                    </attribute>
+                    <attribute>
+                        <name>subsystem</name>
+                        <array>$subsystem_array</array>
+                    </attribute>
+                </create-table>
+                <create-table>
+                    <id>intervals</id>
+                    <schema-ref>julia-signpost-interval</schema-ref>
+                </create-table>
+                <create-table>
+                    <id>events</id>
+                    <schema-ref>julia-signpost-event</schema-ref>
+                </create-table>
+
+                <graph>
+                    <title>Signposts</title>
+                    <lane>
+                        <title>Intervals</title>
+                        <table-ref>intervals</table-ref>
+                        <plot><value-from>name</value-from><label-from>name</label-from></plot>
+                    </lane>
+                    <lane>
+                        <title>Events</title>
+                        <table-ref>events</table-ref>
+                        <plot><value-from>name</value-from><label-from>name</label-from></plot>
+                    </lane>
+                </graph>
+
+                <list>
+                    <title>Intervals</title>
+                    <table-ref>intervals</table-ref>
+                    <column>start</column>
+                    <column>duration</column>
+                    <column>name</column>
+                    <column>message</column>
+                    <column>subsystem</column>
+                </list>
+                <list>
+                    <title>Events</title>
+                    <table-ref>events</table-ref>
+                    <column>timestamp</column>
+                    <column>name</column>
+                    <column>message</column>
+                    <column>subsystem</column>
+                </list>
+
+                <aggregation>
+                    <title>Interval Summary</title>
+                    <table-ref>intervals</table-ref>
+                    <hierarchy>
+                        <level><column>subsystem</column></level>
+                        <level><column>name</column></level>
+                    </hierarchy>
+                    <column><title>Count</title><count/></column>
+                    <column><title>Total</title><sum>duration</sum></column>
+                    <column><title>Mean</title><average>duration</average></column>
+                </aggregation>
+            </instrument>
+        </package>
+        """
+    src = joinpath(dir, "Julia.instrpkg")
+    write(src, pkg)
+    path = joinpath(dir, "Julia.instrdst")
+    rm(path; recursive=true, force=true)
+    output = IOBuffer()
+    cmd = pipeline(ignorestatus(`xcrun instrumentbuilder -i $src -o $path`);
+                   stdout=output, stderr=output)
+    if !success(run(cmd)) || !ispath(path)
+        error("Failed to build Instruments package:\n", String(take!(output)))
+    end
+    return path, instrument
 end
 
 
