@@ -1066,7 +1066,20 @@ end
     end
 end
 
+struct UnprintableMessage end
+Base.print(::IO, ::UnprintableMessage) = error("message was formatted")
+
 @testset "signpost" begin
+
+# signposts without a valid ID are dropped before formatting their message,
+# while events get a valid ID
+let log = OSLog("org.juliainterop.objectivec", "test suite")
+    for signpost in (OS.OSSignpostNull(), OS.OSSignpostInvalid())
+        @test OS.os_signpost_emit_with_type(log, signpost, OS.SIGNPOST_EVENT, "name",
+                                            UnprintableMessage()) === nothing
+    end
+    @test_throws "message was formatted" @signpost_event log=log "name" UnprintableMessage()
+end
 
 # dynamic tracing categories are disabled unless Instruments asks for them
 @test !OS.is_signpost_enabled(OSLog("org.juliainterop.objectivec", OS.CATEGORY_DYNAMIC_TRACING))

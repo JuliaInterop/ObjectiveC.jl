@@ -338,6 +338,11 @@ end
 function os_signpost_emit_with_type(log::OSLog, signpost::OSSignpost,
                                     type::os_signpost_type_t, strings::StaticStrings,
                                     name, msg)
+    # like Apple's macros, drop signposts without a valid ID, which `OSSignpost(log)`
+    # returns when signposts were disabled after checking `is_signpost_enabled`
+    if signpost.id == OSSignpostNull().id || signpost.id == OSSignpostInvalid().id
+        return
+    end
     strings, msg = resolve_strings(strings, name, msg)
     strings.dso == C_NULL && return
     os_log_call(msg) do buf
@@ -494,7 +499,7 @@ macro signpost_event(ex...)
     quote
         log = $(esc(log_ex))
         if is_signpost_enabled(log)
-            os_signpost_emit_with_type(log, OSSignpostNull(), SIGNPOST_EVENT,
+            os_signpost_emit_with_type(log, OSSignpostExclusive(), SIGNPOST_EVENT,
                                        $(signpost_strings(name)), $(esc(name)), $(esc(msg)))
         end
     end
