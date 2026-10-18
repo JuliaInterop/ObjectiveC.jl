@@ -250,7 +250,7 @@ function objcm(mod, ex)
         push!(argnames, name)
 
         Meta.isexpr(arg, :(::)) || callerror("missing argument type")
-        value, typ = arg.args
+        local value, typ = arg.args
         if value isa QuoteNode
             # nameless params are parsed as a symbol
             # (there's an edge case when using e.g. `:length(x)::typ`, causing the `length`
@@ -262,13 +262,11 @@ function objcm(mod, ex)
     end
 
     # the method may be a plain symbol, or already contain the first arg
-    if method isa Symbol
-        argnames, argvals, argtyps = [], [], []
-    elseif Meta.isexpr(method, :call) && method.args[1] == :(:)
+    if Meta.isexpr(method, :call) && method.args[1] == :(:)
         _, method, arg = method.args
         isa(method, Symbol) || callerror("method name must be a literal symbol")
         parse_argument(arg)
-    else
+    elseif !isa(method, Symbol)
         callerror("method name must be a literal")
     end
 
@@ -702,6 +700,37 @@ Base.propertynames(object::Object) = objc_propertynames(typeof(object))
 propertyerror(s::String) = error("""Objective-C property declaration: $s.
                                     Refer to the @objcproperties docstring for more details.""")
 
+function process_property!(properties, mod, ex)
+    isa(ex, LineNumberNode) && return
+    Meta.isexpr(ex, :macrocall) || propertyerror("invalid property declaration $ex")
+
+    # split the contained macrocall into its parts
+    cmd = ex.args[1]
+    args = []
+    kwargs = Dict()
+    for arg in ex.args[2:end]
+        isa(arg, LineNumberNode) && continue
+        if isa(arg, Expr) && arg.head == :(=)
+            kwargs[arg.args[1]] = arg.args[2]
+        else
+            push!(args, arg)
+        end
+    end
+
+    # if we're dealing with `@static`, so recurse into the block
+    # TODO: liberally support all unknown macros?
+    if cmd == Symbol("@static")
+        ex = macroexpand(mod, ex; recursive=false)
+        if ex !== nothing
+            for arg in ex.args
+                process_property!(properties, mod, arg)
+            end
+        end
+    else
+        push!(properties, (; cmd, args, kwargs))
+    end
+end
+
 """
     @objcproperties ObjCType begin
         @autoproperty myProperty::ObjCType [type=JuliaType] [setter=setMyProperty] [getter=getMyProperty] [availability::PlatformAvailability]
@@ -749,35 +778,9 @@ macro objcproperties(typ, ex)
 
     # collect property declarations
     properties = []
-    function process_property(ex)
-        isa(ex, LineNumberNode) && return
-        Meta.isexpr(ex, :macrocall) || propertyerror("invalid property declaration $ex")
-
-        # split the contained macrocall into its parts
-        cmd = ex.args[1]
-        args = []
-        kwargs = Dict()
-        for arg in ex.args[2:end]
-            isa(arg, LineNumberNode) && continue
-            if isa(arg, Expr) && arg.head == :(=)
-                kwargs[arg.args[1]] = arg.args[2]
-            else
-                push!(args, arg)
-            end
-        end
-
-        # if we're dealing with `@static`, so recurse into the block
-        # TODO: liberally support all unknown macros?
-        if cmd == Symbol("@static")
-            ex = macroexpand(__module__, ex; recursive=false)
-            if ex !== nothing
-                process_property.(ex.args)
-            end
-        else
-            push!(properties, (; cmd, args, kwargs))
-        end
+    for arg in ex.args
+        process_property!(properties, __module__, arg)
     end
-    process_property.(ex.args)
 
     for (cmd, args, kwargs) in properties
         # there should only be a single positional argument,

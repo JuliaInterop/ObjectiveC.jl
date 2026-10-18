@@ -121,8 +121,8 @@ function Base.methods(class::Class)
                   class, count)
     meths′ = [unsafe_load(meths, i) for i = 1:count[1]]
     Libc.free(meths)
-    meths = [ccall(:method_getName, Ptr{Cvoid}, (Ptr{Cvoid},), meth) for meth in meths′]
-    return map(meth->selname(meth), meths)
+    sels = [ccall(:method_getName, Ptr{Cvoid}, (Ptr{Cvoid},), meth) for meth in meths′]
+    return map(sel->selname(sel), sels)
 end
 
 
