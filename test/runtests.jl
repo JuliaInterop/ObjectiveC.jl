@@ -975,11 +975,98 @@ end
 let logger = OSLog("org.juliainterop.objectivec", "test suite")
     logger("test")
     logger("test", type=OS.LOG_TYPE_INFO)
+
+    log_message(logger) = logger("test")
+    log_message(logger)
+    @test @allocated(log_message(logger)) == 0
 end
 
+end
+
+@testset "static strings" begin
+    # strings of JIT-compiled code are not part of an image
+    strings = OS.static_strings(Val(:test), OS.PUBLIC_STRING)
+    @test strings.dso == C_NULL
+    @test unsafe_string(strings.name) == "test"
+    @test unsafe_string(strings.format) == "%{public}s"
+
+    fallback = OS.fallback_strings()
+    @test fallback.dso != C_NULL
+    @test OS.shared_cache_strings().dso != C_NULL
+
+    # code coverage (before Julia 1.14) and --pkgimages=no keep the native code of package
+    # images from being used, so check the strings of precompiled code in a fresh process
+    mktempdir() do dir
+        pkg = joinpath(dir, "SignpostImageTest")
+        mkpath(joinpath(pkg, "src"))
+        write(joinpath(pkg, "Project.toml"), """
+            name = "SignpostImageTest"
+            uuid = "5f6ab2d4-42a3-4c8e-9a0b-0b8f3a6c7e21"
+
+            [deps]
+            ObjectiveC = "e86c9b32-1129-44ac-8ea0-90d5bb39ded9"
+            """)
+        write(joinpath(pkg, "src", "SignpostImageTest.jl"), """
+            module SignpostImageTest
+            using ObjectiveC.OS
+            # never called during precompilation
+            launch(log) = @signpost_event log=log "Launch" "message"
+            end
+            """)
+        script = """
+            using ObjectiveC, ObjectiveC.OS, SignpostImageTest, Test
+
+            function in_cstrings(strings)
+                size = Ref{Culong}(0)
+                data = @ccall getsectiondata(strings.dso::Ptr{Cvoid}, "__TEXT"::Cstring,
+                                             "__cstring"::Cstring,
+                                             size::Ptr{Culong})::Ptr{UInt8}
+                data != C_NULL && data <= strings.name < data + size[] &&
+                                  data <= strings.format < data + size[]
+            end
+
+            # ObjectiveC.jl's own strings live in its image
+            fallback = OS.fallback_strings()
+            @test unsafe_string(fallback.name) == "Julia"
+            @test in_cstrings(fallback)
+
+            # strings of a call site in another package live in that package's image
+            strings = OS.static_strings(Val(:Launch), OS.PUBLIC_STRING)
+            @test strings.dso != C_NULL && strings.dso != fallback.dso
+            @test unsafe_string(strings.name) == "Launch"
+            @test in_cstrings(strings)
+            """
+        cmd = `$(Base.julia_cmd()) --code-coverage=none --pkgimages=yes
+               --project=$(Base.active_project()) -e $script`
+        cmd = addenv(cmd, "JULIA_LOAD_PATH" => join(["@", dir, "@stdlib"], ':'))
+        @test success(pipeline(cmd; stdout, stderr))
+    end
+
+    # the interpreter does not support `llvmcall`, so it must not be used for these strings
+    script = """
+        using ObjectiveC, ObjectiveC.OS
+        log = OSLog("org.juliainterop.objectivec", "test suite")
+        @signpost_event log=log "Event" "message"
+        """
+    cmd = `$(Base.julia_cmd()) --compile=min --pkgimages=no
+           --project=$(Base.active_project()) -e $script`
+    @test success(pipeline(cmd; stdout, stderr))
 end
 
 @testset "signpost" begin
+
+# names that are not literals
+let name = "dynamic"
+    @signpost_event log=OSLog("org.juliainterop.objectivec", "test suite") name "message"
+    @signpost_interval log=OSLog("org.juliainterop.objectivec", "test suite") name begin end
+end
+
+# messages that are not strings, with and without static strings
+let log = OSLog("org.juliainterop.objectivec", "test suite")
+    for strings in (OS.fallback_strings(), OS.NO_STRINGS)
+        OS.interval_begin(log, OSSignpost(log), strings, "name", :message)
+    end
+end
 
 @testset "interval" begin
 # basic usage
