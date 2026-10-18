@@ -1093,3 +1093,10 @@ end
     @test contains(err, "+ [NSString string]")
     @test contains(err, r"- \[.+ UTF8String\]")
 end
+
+# captured variables that get boxed (`Core.Box`) lose their type
+if isdefined(Test, :detect_closure_boxes)
+    @testset "closure boxes" begin
+        @test Test.detect_closure_boxes(ObjectiveC) == []
+    end
+end
