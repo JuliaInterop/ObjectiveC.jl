@@ -51,8 +51,10 @@ operation; package authors may extend it for wrapper families with nonstandard
 release primitives, such as dispatch objects. Deallocation may autorelease objects, so
 such extensions should release within an [`@unsafe_autoreleasepool`](@ref).
 """
-unsafe_release(obj::Object) =
-    @objc [obj::id{Object} release]::Cvoid
+function unsafe_release(@nospecialize(obj::Object))
+    ptr = Base.bitcast(id{Object}, getfield(obj, :ptr))
+    @objc [ptr::id{Object} release]::Cvoid
+end
 
 """
     checked_release(obj)
@@ -61,7 +63,7 @@ Release the owned reference of a managed wrapper at most once. Package authors
 who need to wrap release-time behavior should extend `release(obj::T)` and call
 `checked_release(obj)` from that method.
 """
-function checked_release(obj::Object)
+function checked_release(@nospecialize(obj::Object))
     (@atomicswap :acquire_release obj.owned = false) || return nothing
     unsafe_release(obj)
     return nothing
@@ -77,8 +79,11 @@ is safe to call more than once or before the finalizer runs. For borrowed
 managed wrappers created with the bare `T(ptr)` constructor, this is a no-op.
 For unmanaged wrappers, this sends the raw Objective-C release message.
 """
-release(obj::Object) =
+# not specialized, as this is the finalizer of every managed wrapper, and compiling it for
+# each class would happen at run time, when the garbage collector first frees one
+release(@nospecialize(obj::Object)) =
     ObjectiveC.is_managed_wrapper(typeof(obj)) ? checked_release(obj) : unsafe_release(obj)
+precompile(release, (Object,))
 
 """
     autorelease(obj)
