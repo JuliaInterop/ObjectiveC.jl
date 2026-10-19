@@ -179,7 +179,7 @@ end
 
 # Default equality for ObjC objects via `isEqual:`. Specific classes can
 # override this for a faster path (NSString, NSURL, etc. already do).
-Base.:(==)(obj1::NSObjectLike, obj2::NSObjectLike) =
+ObjectiveC.objc_isequal(obj1::NSObjectLike, obj2::NSObjectLike) =
     @objc [obj1::id{NSObject} isEqual:obj2::id{NSObject}]::Bool
 
 

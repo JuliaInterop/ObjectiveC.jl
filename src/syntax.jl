@@ -21,6 +21,15 @@ is_managed_wrapper(::Type) = false
 # pushing an autorelease pool, as wrapping the result happens while the pool is active.
 check_available(::Type) = nothing
 
+# wrappers declared with `comparison=true` compare and hash by object identity. this is a
+# trait used by the generic `==` and `hash` below, because defining those methods for every
+# wrapper class makes loading packages with many wrappers slow.
+compare_by_pointer(::Type) = false
+
+# fallback for objects of different classes, or without `comparison`;
+# NSObject overrides this with `isEqual:`
+objc_isequal(a::Object, b::Object) = a === b
+
 
 # Method Calling
 
@@ -533,8 +542,8 @@ Keyword arguments:
     dispatch objects.
   * `availability`: a `PlatformAvailability` describing the OS/version
     availability of the class.
-  * `comparison`: if `true` (default `managed`), define `==` and `hash` for the
-    wrapper class.
+  * `comparison`: if `true` (default `managed`), `==` and `hash` compare objects of
+    the wrapper class by identity, i.e., by their pointer.
 """
 macro objcwrapper(ex...)
     def = ex[end]
@@ -641,8 +650,7 @@ macro objcwrapper(ex...)
         ex = quote
             $(ex.args...)
 
-            Base.:(==)(a::$name, b::$name) = pointer(a) == pointer(b)
-            Base.hash(obj::$name, h::UInt) = hash(pointer(obj), h)
+            $ObjectiveC.compare_by_pointer(::Type{$name}) = true
         end
     end
 
@@ -652,6 +660,19 @@ end
 # Use `getfield` to bypass any user-defined `getproperty` (e.g., from
 # `@objcproperties`) when accessing the pointer slot.
 Base.pointer(obj::Object) = getfield(obj, :ptr)
+
+function Base.:(==)(a::Object, b::Object)
+    T = typeof(a)
+    if T === typeof(b) && compare_by_pointer(T)
+        pointer(a) == pointer(b)
+    else
+        objc_isequal(a, b)
+    end
+end
+
+Base.hash(obj::Object, h::UInt) =
+    compare_by_pointer(typeof(obj)) ? hash(pointer(obj), h) :
+                                      invoke(hash, Tuple{Any,UInt}, obj, h)
 
 # when passing a single object, we automatically convert it to an object pointer
 Base.unsafe_convert(T::Type{<:id}, obj::Object) = convert(T, pointer(obj))
