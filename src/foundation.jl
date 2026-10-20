@@ -503,7 +503,7 @@ export NSError
     @autoproperty domain::id{NSString}
     @autoproperty userInfo::id{NSDictionary} type=Dict{NSString,NSObject}
     @autoproperty localizedDescription::id{NSString}
-    @autoproperty localizedRecoveryOptions::id{NSString}
+    @autoproperty localizedRecoveryOptions::id{NSArray} type=Vector{NSString}
     @autoproperty localizedRecoverySuggestion::id{NSString}
     @autoproperty localizedFailureReason::id{NSString}
 end
