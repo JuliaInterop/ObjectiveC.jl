@@ -724,6 +724,13 @@ end
     err = NSError("NSPOSIXErrorDomain", 1)
     @test isempty(err.userInfo)
     @test contains(err.localizedFailureReason, "Operation not permitted")
+
+    info = NSDictionary(Dict{NSString,Object}(NSString("NSLocalizedDescription") => NSString("boom")))
+    err = NSError("NSPOSIXErrorDomain", 1, info)
+    @test err.localizedDescription == "boom"
+    userInfo = err.userInfo
+    @test userInfo isa Dict{NSString,NSObject}
+    @test String(userInfo[NSString("NSLocalizedDescription")].description) == "boom"
 end
 
 @testset "NSValue" begin

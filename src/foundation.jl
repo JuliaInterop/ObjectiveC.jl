@@ -501,13 +501,12 @@ export NSError
 @objcproperties NSError begin
     @autoproperty code::NSInteger
     @autoproperty domain::id{NSString}
-    @autoproperty userInfo::id{NSDictionary} type=Dict{NSString,Object}
+    @autoproperty userInfo::id{NSDictionary} type=Dict{NSString,NSObject}
     @autoproperty localizedDescription::id{NSString}
     @autoproperty localizedRecoveryOptions::id{NSString}
     @autoproperty localizedRecoverySuggestion::id{NSString}
     @autoproperty localizedFailureReason::id{NSString}
 end
-# TODO: userInfo
 
 function NSError(domain, code)
     return @objc [NSError errorWithDomain:domain::id{NSString}
