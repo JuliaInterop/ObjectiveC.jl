@@ -8,23 +8,33 @@ export @objc, @objcwrapper, @objcproperties, @objcblock, Out
 # written `f(x::FooLike) = …` — ordinary Julia
 # subtyping then matches `Foo` and every wrapped subclass.
 
+# The traits of a wrapper class. `@objcwrapper` defines one `objc_traits` method per class,
+# returning all of them, instead of a method per trait, because every method a package
+# defines adds to the time it takes to load that package. Code should use the functions
+# below, which can also be overridden for individual classes.
+objc_traits(::Type) = (parent=nothing, managed=false, unavailable=nothing, comparison=false)
+
 # `objc_parent` walks the wrapper hierarchy for `@objcproperties`'s property
 # chain (which inherits ancestors' getters/setters).
-objc_parent(::Type{<:Object}) = nothing
+objc_parent(T::Type{<:Object}) = objc_traits(T).parent
 
 # `managed=true` wrappers participate in explicit ownership helpers and in
 # ARC-style `@objc` managed returns. Keep this as a trait instead of deriving
 # from mutability so the ownership contract has one source of truth.
-is_managed_wrapper(::Type) = false
+is_managed_wrapper(T::Type) = objc_traits(T).managed
 
 # wrappers for unavailable classes throw when constructed; `@objc` checks this before
 # pushing an autorelease pool, as wrapping the result happens while the pool is active.
-check_available(::Type) = nothing
+function check_available(T::Type)
+    unavailable = objc_traits(T).unavailable
+    unavailable === nothing || throw(UnavailableError(nameof(T), unavailable))
+    return
+end
 
 # wrappers declared with `comparison=true` compare and hash by object identity. this is a
 # trait used by the generic `==` and `hash` below, because defining those methods for every
 # wrapper class makes loading packages with many wrappers slow.
-compare_by_pointer(::Type) = false
+compare_by_pointer(T::Type) = objc_traits(T).comparison
 
 # fallback for objects of different classes, or without `comparison`;
 # NSObject overrides this with `isEqual:`
@@ -639,19 +649,10 @@ macro objcwrapper(ex...)
         # `classkind(::Type{<:Object{K}})` method declared in syntax.jl; no
         # per-class definition needed.
 
-        # record the immediate ObjC parent for the property-dispatch chain.
-        $ObjectiveC.objc_parent(::Type{$name}) = $super
-        $ObjectiveC.is_managed_wrapper(::Type{$name}) = $managed
-        $ObjectiveC.check_available(::Type{$name}) = $avail_check
-    end
-
-    # add optional methods
-    if comparison
-        ex = quote
-            $(ex.args...)
-
-            $ObjectiveC.compare_by_pointer(::Type{$name}) = true
-        end
+        $ObjectiveC.objc_traits(::Type{$name}) =
+            (parent=$super, managed=$managed,
+             unavailable=$(is_available(availability) ? nothing : availability),
+             comparison=$comparison)
     end
 
     esc(ex)
