@@ -234,6 +234,39 @@ end
     @test Base.return_types(get_len, (TestNSStringBareSub,))[1] === Culong
 end
 
+@objcwrapper managed = false comparison = true TestTraitsChild <: TestNSString
+# hand-written definitions of individual traits take precedence over `objc_traits`
+@objcwrapper TestTraitsOverride <: Object
+ObjectiveC.objc_parent(::Type{TestTraitsOverride}) = TestNSString
+ObjectiveC.is_managed_wrapper(::Type{TestTraitsOverride}) = false
+ObjectiveC.compare_by_pointer(::Type{TestTraitsOverride}) = false
+ObjectiveC.check_available(::Type{TestTraitsOverride}) = error("TestTraitsOverride is unavailable")
+@testset "@objcwrapper traits" begin
+    @test ObjectiveC.objc_parent(TestNSString) === Object
+    @test ObjectiveC.is_managed_wrapper(TestNSString)
+    @test ObjectiveC.compare_by_pointer(TestNSString)
+    @test ObjectiveC.check_available(TestNSString) === nothing
+
+    @test ObjectiveC.objc_parent(TestTraitsChild) === TestNSString
+    @test !ObjectiveC.is_managed_wrapper(TestTraitsChild)
+    @test ObjectiveC.compare_by_pointer(TestTraitsChild)
+    @test_throws UnavailableError ObjectiveC.check_available(TestWrapperNoIntro1)
+
+    @test ObjectiveC.objc_parent(TestTraitsOverride) === TestNSString
+    @test !ObjectiveC.is_managed_wrapper(TestTraitsOverride)
+    @test !ObjectiveC.compare_by_pointer(TestTraitsOverride)
+    @test_throws "TestTraitsOverride is unavailable" ObjectiveC.check_available(TestTraitsOverride)
+
+    str = "foo"
+    ptr = @objc [NSString stringWithUTF8String:str::Ptr{UInt8}]::id{TestTraitsOverride}
+    obj = TestTraitsOverride(ptr)
+    @test obj.length == length(str)
+    @test :length in propertynames(obj)
+    @test obj != TestTraitsOverride(ptr)
+    ptr = reinterpret(id{TestNSString}, ptr)
+    @test TestNSString(ptr) == TestNSString(ptr)
+end
+
 @testset "@objc blocks" begin
     # create a dummy class we'll register our blocks with
     # (no need to use @objcwrapper as we're not constructing an id{BlockWrapper})
