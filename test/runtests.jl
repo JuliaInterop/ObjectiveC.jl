@@ -440,6 +440,7 @@ using .Foundation
 
 @objcproperties TestManagedNSObject begin
     @autoproperty selfObject::id{TestManagedNSObject} getter = self
+    @autoproperty copied::id{TestManagedNSObject} getter = mutableCopy
 end
 
 @objcproperties TestUnmanagedNSObject begin
@@ -471,6 +472,34 @@ function release_stress(n)
     end
     return nothing
 end
+
+# properties of every kind of result and argument that instance sends support
+@objcwrapper TestNSNumber <: NSObject
+@objcproperties TestNSNumber begin
+    @autoproperty boolValue::Bool
+    @autoproperty charValue::Cchar
+    @autoproperty intValue::Cint
+    @autoproperty unsignedLongLongValue::Culonglong
+    @autoproperty floatValue::Cfloat
+    @autoproperty doubleValue::Cdouble
+    @autoproperty stringValue::id{NSString}
+    @autoproperty integerValue::NSInteger type = Int8
+end
+@objcwrapper TestNSValue <: NSObject
+@objcproperties TestNSValue begin
+    @autoproperty rangeValue::NSRange
+    @autoproperty pointerValue::Ptr{Cvoid}
+end
+@objcwrapper TestNSQueue <: NSObject
+@objcproperties TestNSQueue begin
+    @autoproperty name::id{NSString} setter = setName
+    @autoproperty maxConcurrentOperationCount::NSInteger setter = setMaxConcurrentOperationCount
+    @autoproperty suspended::Bool getter = isSuspended setter = setSuspended
+end
+
+pool_token() = (pool = ccall(:objc_autoreleasePoolPush, Ptr{Cvoid}, ());
+                ccall(:objc_autoreleasePoolPop, Cvoid, (Ptr{Cvoid},), pool);
+                pool)
 
 @testset "managed wrappers" begin
     @test_throws "unrecognized keyword argument: immutable" macroexpand(
@@ -683,8 +712,85 @@ end
     @test_throws ArgumentError Out{TestUnmanagedNSObject}()
 end
 
+@testset "instance sends" begin
+    # sends with up to one argument use shared helpers instead of being expanded
+    @static if VERSION >= v"1.12" && !ObjectiveC.tracing
+        expanded(ex) = string(macroexpand(@__MODULE__, ex))
+        @test contains(expanded(:(@objc [obj::id{NSObject} hash]::NSUInteger)), "objc_send")
+        @test contains(expanded(:(@objc [obj::id{NSObject} isEqual:x::id{NSObject}]::Bool)),
+                       "objc_send")
+        @test !contains(expanded(:(@objc [obj::id{NSObject} performSelector:x::Ptr{Cvoid}
+                                                  withObject:y::id{NSObject}]::id{NSObject})),
+                        "objc_send")
+    end
+
+    rewrap(T, obj) = retain(T, reinterpret(id{T}, pointer(obj)))
+    num = rewrap(TestNSNumber, NSNumber(42))
+    @test num.boolValue === true
+    @test num.charValue === Cchar(42)
+    @test num.intValue === Cint(42)
+    @test num.unsignedLongLongValue === Culonglong(42)
+    @test num.floatValue === Cfloat(42)
+    @test num.doubleValue === Cdouble(42)
+    @test num.stringValue isa NSString
+    @test String(num.stringValue) == "42"
+    @test num.integerValue === Int8(42)
+    @unsafe_autoreleasepool begin
+        @test (@objc [num::id{NSNumber} stringValue]::id{NSString}) isa id{NSString}
+    end
+
+    range = NSRange(3, 4)
+    val = rewrap(TestNSValue, NSValue(range))
+    @test val.rangeValue === range
+    val = rewrap(TestNSValue, NSValue(Ptr{Cvoid}(42)))
+    @test val.pointerValue === Ptr{Cvoid}(42)
+
+    queue = @objc [NSOperationQueue new]::TestNSQueue
+    @test queue.retainCount == 1
+    queue.name = NSString("queue")
+    @test String(queue.name) == "queue"
+    queue.maxConcurrentOperationCount = 3
+    @test queue.maxConcurrentOperationCount == 3
+    @test !queue.suspended
+    queue.suspended = true
+    @test queue.suspended
+
+    # owned results are adopted, borrowed ones retained
+    str = @objc [[NSString alloc]::id{NSString} initWithUTF8String:("x"^40)::Ptr{UInt8}]::NSString
+    @test String(str) == "x"^40
+    obj = @objc [NSObject new]::TestManagedNSObject
+    copied = @objc [str::id{NSString} mutableCopy]::TestManagedNSObject
+    @test copied.retainCount == 1
+    copied = rewrap(TestManagedNSObject, str).copied
+    @test copied.retainCount == 1
+    slot = weak_ref(copied)
+    finalize(copied)
+    @test is_deallocated(slot)
+    free_weak_ref(slot)
+    count = obj.retainCount
+    same = obj.selfObject
+    @test same.retainCount == count + 1
+    finalize(same)
+    @test obj.retainCount == count
+
+    # the autorelease pool is balanced when a send throws
+    token = pool_token()
+    dict = NSDictionary()
+    key = NSString("missing")
+    @test (@objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::Union{Nothing,NSObject}) === nothing
+    @test_throws UndefRefError @objc [dict::id{NSDictionary} objectForKey:key::id{NSObject}]::NSObject
+    @test pool_token() == token
+    @test_throws MethodError @objc [dict::id{NSDictionary} objectForKey:"key"::id{NSObject}]::Union{Nothing,NSObject}
+    @test pool_token() == token
+end
+
 @testset "unavailable return types" begin
     @test_throws UnavailableError @objc [NSObject new]::TestWrapperNoIntro1
+    # availability is checked before evaluating arguments
+    evaluated = Ref(false)
+    obj = @objc [NSObject new]::TestManagedNSObject
+    @test_throws UnavailableError @objc [obj::id{NSObject} isEqual:(evaluated[] = true; obj)::id{NSObject}]::TestWrapperNoIntro1
+    @test !evaluated[]
     @test_throws UnavailableError Out{TestWrapperNoIntro1}()
 end
 
