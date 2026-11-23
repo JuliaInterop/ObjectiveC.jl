@@ -62,6 +62,14 @@ function address_ir(name::String, def::String, typ::String)
 end
 # the linker defines `__dso_handle` as the Mach-O header of the image being linked
 dso_ir() = address_ir("__dso_handle", "extern_weak hidden global i8", "i8")
+
+# Before Julia 1.14, the JIT links with RuntimeDyld except on aarch64 (in default builds).
+# Unlike JITLink, it does not resolve undefined weak references to NULL, but fails to link
+# the code (JuliaLang/julia#60576 switched every platform to JITLink). There,
+# `static_strings` looks up the image containing the strings at run time instead, which
+# costs a few µs.
+const JIT_RESOLVES_WEAK = Sys.ARCH === :aarch64 || VERSION >= v"1.14.0-DEV.1553"
+
 function cstring_ir(str::String)
     typ, init = llvm_cstring(str)
     # Julia 1.10 confuses identically-named private globals of different `llvmcall`s
@@ -75,16 +83,33 @@ end
     # a GlobalRef makes Julia compile this code also when it would otherwise interpret it
     # (e.g. with `--compile=min`), which does not support `llvmcall`
     llvmcall = GlobalRef(Core.Intrinsics, :llvmcall)
+    dso = if JIT_RESOLVES_WEAK
+        :(reinterpret(Ptr{Cvoid}, $llvmcall(($(dso_ir()), "entry"), UInt64, Tuple{})))
+    else
+        :(image_header(name_ptr))
+    end
     quote
         Base.@_inline_meta
-        StaticStrings(
-            reinterpret(Ptr{Cvoid},
-                        $llvmcall(($(dso_ir()), "entry"), UInt64, Tuple{})),
-            reinterpret(Ptr{UInt8},
-                        $llvmcall(($(cstring_ir(String(name))), "entry"), UInt64, Tuple{})),
-            reinterpret(Ptr{UInt8},
-                        $llvmcall(($(cstring_ir(String(format))), "entry"), UInt64, Tuple{})))
+        name_ptr = reinterpret(Ptr{UInt8},
+            $llvmcall(($(cstring_ir(String(name))), "entry"), UInt64, Tuple{}))
+        format_ptr = reinterpret(Ptr{UInt8},
+            $llvmcall(($(cstring_ir(String(format))), "entry"), UInt64, Tuple{}))
+        StaticStrings($dso, name_ptr, format_ptr)
     end
+end
+
+struct Dl_info
+    dli_fname::Cstring
+    dli_fbase::Ptr{Cvoid}
+    dli_sname::Cstring
+    dli_saddr::Ptr{Cvoid}
+end
+
+# the header of the image containing `ptr`, or NULL if it isn't part of one
+function image_header(ptr::Ptr)
+    info = Ref{Dl_info}()
+    found = @ccall dladdr(ptr::Ptr{Cvoid}, info::Ptr{Dl_info})::Cint
+    return found == 0 ? C_NULL : info[].dli_fbase
 end
 
 """
