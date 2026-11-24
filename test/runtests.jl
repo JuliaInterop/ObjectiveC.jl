@@ -1164,6 +1164,8 @@ end
             using ObjectiveC.OS
             # never called during precompilation
             launch(log) = @signpost_event log=log "Launch" "message"
+            # JIT-compiled and executed while generating the image
+            @assert OS.static_strings(Val(:Precompile), OS.PUBLIC_STRING).dso == C_NULL
             end
             """)
         script = """
